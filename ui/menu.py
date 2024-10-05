@@ -62,6 +62,7 @@ displays = [
     Display(50, 50, 200, 150, "Display 1"),
     Display(300, 50, 200, 150, "Display 2"),
     Display(550, 50, 200, 150, "Display 3"),
+    
 ]
 
 # Create "+" button
@@ -81,7 +82,8 @@ def create_new_display():
 def show_full_screen(display):
     full_screen = True
     camera_button = Button(WIDTH // 4 - 100, HEIGHT // 2 + 200, 200, 50, "Display Camera", GREEN)
-    screen_button = Button(3 * WIDTH // 4 - 100, HEIGHT // 2 + 200, 200, 50, "Display Screen", BLUE)
+    screen_button = Button( 3* WIDTH // 4 - 100, HEIGHT // 2 + 200, 200, 50, "Display Screen", BLUE)
+    keylogger_button= Button(2*WIDTH // 4 - 100, HEIGHT // 2 + 200, 200, 50,"Send Keylogger",RED)
     
     while full_screen:
         for event in pygame.event.get():
@@ -96,6 +98,8 @@ def show_full_screen(display):
                         print(f"Display Camera for {display.text}")
                     elif screen_button.rect.collidepoint(event.pos):
                         print(f"Display Screen for {display.text}")
+                    elif  keylogger_button.rect.collidepoint(event.pos):
+                        print(f"Display file keylogger for {display.text}")
 
         screen.fill(WHITE)
         text_surface = font.render(f"Full Screen: {display.text}", True, BLACK)
@@ -105,6 +109,7 @@ def show_full_screen(display):
         back_button.draw(screen, 0)
         camera_button.draw(screen)
         screen_button.draw(screen)
+        keylogger_button.draw(screen)
         
         pygame.display.flip()
 
