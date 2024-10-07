@@ -107,7 +107,7 @@ def retreive_screenshot(conn):
             # Prendre la capture d'écran
             img = sct.grab(rect)
             # Ajuster le niveau de compression ici (0-9)
-            pixels = zlib.compress(img.rgb, 6)
+            pixels = zlib.compress(img.rgb, 1)
             # Envoie de la taille de la taille des pixels
             size = len(pixels)
             size_len = (size.bit_length() + 7) // 8
@@ -241,8 +241,8 @@ if __name__ == "__main__":
     import zlib, mss
 
     if (options.screen == "t"):
-        WIDTH = 1900
-        HEIGHT = 1000
+        WIDTH = 500
+        HEIGHT = 500
         threadscreen = threading.Thread(target=screen_sender, args=(options.host, options.port + 1))  # port 5001
         threadscreen.start()
     # camera sender udp
