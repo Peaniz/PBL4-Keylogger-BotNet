@@ -258,8 +258,8 @@ if __name__ == "__main__":
     import zlib, mss
 
     if (options.screen == "t"):
-        WIDTH = 500
-        HEIGHT = 500
+        WIDTH = 600
+        HEIGHT = 300
         threadscreen = threading.Thread(target=screen_sender, args=(options.host, options.port + 1))  # port 5001
         threadscreen.start()
     # camera sender udp
