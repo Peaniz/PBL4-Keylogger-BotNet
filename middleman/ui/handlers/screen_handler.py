@@ -1,20 +1,23 @@
+import queue
 import pygame
 import socket
 import zlib
 import threading
+import select
+
 
 def recvall(sock, size):
-    """Nhận chính xác 'size' byte từ socket."""
     buf = b''
     try:
-        sock.settimeout(1.0)  # Add timeout to prevent hanging
         while len(buf) < size:
-            data = sock.recv(min(size - len(buf), 8192))  # Read in chunks
-            if not data:
-                return None
-            buf += data
-        return buf
-    except socket.timeout:
+            ready, _, _ = select.select([sock], [], [], 1.0)  # Chờ tối đa 1 giây
+            if ready:
+                data = sock.recv(size - len(buf))
+                if not data:
+                    return None
+                buf += data
+            else:
+                break  # Thoát nếu không có dữ liệu
         return buf if len(buf) == size else None
     except Exception as e:
         print(f"Error in recvall: {e}")
@@ -26,8 +29,13 @@ class ScreenReceiver:
         self.port = port
         self.running = True
         self.screen = pygame.display.get_surface()
-        self.screen_panel_rect = pygame.Rect(100, 70, 600, 300)
+        self.frame_surface = pygame.Surface((600, 300))  # Khung cố định
+        self.frame_surface.fill((0, 0, 0))  # Nền đen cho khung
+        self.screen_panel_rect = self.frame_surface.get_rect(center=self.screen.get_rect().center)
         self.receive_thread = None
+        self.buffer = None
+        self.lock = threading.Lock()
+        self.double_buffer = None
 
     def receive_frames(self):
         try:
@@ -36,6 +44,7 @@ class ScreenReceiver:
                 sock.settimeout(1.0)  # Add timeout
                 
                 while self.running:
+
                     try:
                         size_len = sock.recv(1)
                         if not size_len:
@@ -66,14 +75,13 @@ class ScreenReceiver:
                             pixels = zlib.decompress(pixels)
                             img = pygame.image.fromstring(pixels, (600, 300), 'RGB')
                             
-                            # Use a lock or event to synchronize screen updates
-                            if pygame.display.get_init():
-                                self.screen.blit(img, self.screen_panel_rect.topleft)
-                                pygame.display.update([self.screen_panel_rect])
-                            
+                            with self.lock:
+                                self.buffer = img
+
                         except Exception as e:
                             print(f"Error processing frame: {e}")
                             continue
+
 
                     except socket.timeout:
                         continue
@@ -97,7 +105,25 @@ class ScreenReceiver:
         if self.receive_thread and self.receive_thread.is_alive():
             self.receive_thread.join(timeout=1.0)  # Wait max 1 second for thread to finish
 
+    def update_screen(self):
+        frame_queue = queue.Queue(maxsize=1)
+
+        while self.running:
+            with self.lock:
+                if self.buffer:
+                    if not frame_queue.full():
+                        frame_queue.put(self.buffer.copy())
+                    self.buffer = None
+
+            if not frame_queue.empty():
+                self.double_buffer = frame_queue.get()
+
+            if self.double_buffer:
+
+                pygame.display.update([self.screen_panel_rect])
+
 def screenreceiver(host, port=5001):
     receiver = ScreenReceiver(host, port)
     receiver.start()
-    return receiver 
+    threading.Thread(target=receiver.update_screen, daemon=True).start()
+    return receiver
