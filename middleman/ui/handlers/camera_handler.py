@@ -1,82 +1,140 @@
+import queue
+import zlib
+
 import pygame
 import socket
-import cv2
-import numpy as np
 import threading
-import struct
+import select
+import numpy as np
+import cv2
 
-def camreceiver(host, port=5002):
-    global camera_running
-    camera_running = True
-    screen = pygame.display.get_surface()
-    camera_panel_rect = pygame.Rect(100, 70, 600, 300)
-    
-    s = socket.socket()
+
+def recvall(sock, size):
+    buf = b''
     try:
-        s.connect((host, port))
-        s.settimeout(5.0)
-        dat = b''
-        payload_size = struct.calcsize("B")
-
-        while camera_running:
-            try:
-                while len(dat) < payload_size:
-                    packet = s.recv(4096)
-                    if not packet:
-                        raise ConnectionError("Connection closed by remote host")
-                    dat += packet
-
-                packed_count = dat[:payload_size]
-                dat = dat[payload_size:]
-                count = struct.unpack("B", packed_count)[0]
-
-                frame_data = b''
-                while count > 0:
-                    if dat:
-                        frame_data += dat
-                        dat = b''
-                    else:
-                        packet = s.recv(4096)
-                        if not packet:
-                            raise ConnectionError("Connection closed by remote host")
-                        frame_data += packet
-                    count -= 1
-
-                try:
-                    img_array = np.frombuffer(frame_data, dtype=np.uint8)
-                    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-                    if img is not None:
-                        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                        img = cv2.resize(img, (600, 300))
-                        img_surface = pygame.surfarray.make_surface(img)
-                        
-                        screen.blit(img_surface, camera_panel_rect.topleft)
-                        pygame.display.update([camera_panel_rect])
-                        pygame.time.delay(30)
-                        
-                        frame_data = b''
-                        dat = b''
-                except Exception as e:
-                    print(f"Error processing frame: {e}")
-                    continue
-
-            except socket.timeout:
-                print("Camera stream timeout")
-                break
-            except ConnectionError as e:
-                print(f"Connection error: {e}")
-                break
-            except Exception as e:
-                print(f"Error receiving camera data: {e}")
-                break
-
+        while len(buf) < size:
+            ready, _, _ = select.select([sock], [], [], 1.0)  # Chờ tối đa 1 giây
+            if ready:
+                data = sock.recv(size - len(buf))
+                if not data:
+                    return None
+                buf += data
+            else:
+                break  # Thoát nếu không có dữ liệu
+        return buf if len(buf) == size else None
     except Exception as e:
-        print(f"Camera connection error: {e}")
-    finally:
-        camera_running = False
+        print(f"Error in recvall: {e}")
+        return None
+
+
+class CameraReceiver:
+    def __init__(self, host, port=5002):
+        self.host = host
+        self.port = port
+        self.running = True
+        self.screen = pygame.display.get_surface()
+        self.frame_surface = pygame.Surface((600, 300))  # Khung cố định
+        self.frame_surface.fill((0, 0, 0))  # Nền đen cho khung
+        self.screen_panel_rect = self.frame_surface.get_rect(center=self.screen.get_rect().center)
+        self.receive_thread = None
+        self.buffer = None
+        self.double_buffer = None
+        self.lock = threading.Lock()
+
+    def receive_frames(self):
         try:
-            s.close()
-        except:
-            pass
-        
-    return False
+            with socket.socket() as sock:
+                sock.connect((self.host, self.port))
+                sock.settimeout(1.0)  # Add timeout
+
+                while self.running:
+                    try:
+                        size_len = sock.recv(1)
+                        if not size_len:
+                            print("Disconnected from server.")
+                            break
+
+                        size_len = int.from_bytes(size_len, byteorder='big')
+                        if size_len != 4:
+                            print(f"Invalid size length: {size_len}, expected 4")
+                            continue
+
+                        size_bytes = sock.recv(4)
+                        if len(size_bytes) != 4:
+                            print("Failed to receive size bytes")
+                            continue
+
+                        size = int.from_bytes(size_bytes, byteorder='big')
+                        if size <= 0 or size > 1000000:
+                            print(f"Invalid frame size: {size}")
+                            continue
+
+                        pixels = recvall(sock, size)
+                        if not pixels:
+                            print("Received incomplete frame data.")
+                            continue
+
+                        try:
+                            pixels = zlib.decompress(pixels)
+                            img = cv2.imdecode(np.frombuffer(pixels, dtype=np.uint8), cv2.IMREAD_COLOR)
+                            if img is not None:
+                                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                                img = pygame.image.fromstring(img.tobytes(), img.shape[1::-1], 'RGB')
+
+                                with self.lock:
+                                    self.buffer = img
+
+                        except Exception as e:
+                            print(f"Error processing frame: {e}")
+                            continue
+
+                    except socket.timeout:
+                        continue
+                    except Exception as e:
+                        print(f"Error receiving frame: {e}")
+                        break
+
+        except Exception as e:
+            print(f"Connection error: {e}")
+        finally:
+            self.running = False
+
+    def start(self):
+        self.running = True
+        self.receive_thread = threading.Thread(target=self.receive_frames)
+        self.receive_thread.daemon = True  # Make thread daemon so it exits when main program exits
+        self.receive_thread.start()
+
+    def stop(self):
+        self.running = False
+        if self.receive_thread and self.receive_thread.is_alive():
+            self.receive_thread.join(timeout=1.0)  # Wait max 1 second for thread to finish
+
+    def update_screen(self):
+        frame_queue = queue.Queue(maxsize=1)
+
+        while self.running:
+            with self.lock:
+                if self.buffer:
+                    if not frame_queue.full():
+                        frame_queue.put(self.buffer.copy())
+                    self.buffer = None
+
+            if not frame_queue.empty():
+                self.double_buffer = frame_queue.get()
+
+            if self.double_buffer:
+                pygame.display.update([self.screen_panel_rect])
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.stop()
+
+        pygame.quit()
+
+
+def camerareceiver(host, port=5002):
+    receiver = CameraReceiver(host, port)
+    receiver.start()
+    threading.Thread(target=receiver.update_screen, daemon=True).start()
+    return receiver
