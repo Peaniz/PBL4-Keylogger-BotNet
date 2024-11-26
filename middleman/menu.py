@@ -239,7 +239,7 @@ def open_add_ip_dialog(screen, font):
                 else:
                     text += event.unicode
 
-        # Vẽ giao diện
+        
         screen.fill(GRAY)
         pygame.draw.rect(screen, GREEN if active else WHITE, input_rect, 2)
         txt_surface = font.render(text, True, BLACK)
@@ -252,7 +252,7 @@ def open_add_ip_dialog(screen, font):
         pygame.draw.rect(screen, RED, cancel_button)
         cancel_text = font.render("Cancel", True, WHITE)
         screen.blit(cancel_text, (cancel_button.x + 10, cancel_button.y + 10))
-
+        
         pygame.display.flip()
 
 def update_victims():
@@ -280,6 +280,7 @@ def main():
     add_button = Display(WIDTH - 100, HEIGHT - 100, 80, 80, "+", font)
     status_thread = threading.Thread(target=status_checker_thread, args=(options,), daemon=True)
     status_thread.start()
+    ui_state.max_scroll_y = max(0, len(displays) * 300 - HEIGHT)
 
     new_ip = None
     ok_button = None
@@ -300,9 +301,6 @@ def main():
                             if new_ip.text:
                                 if is_valid_ip(new_ip.text): 
                                     insert_new_victim(new_ip.text) 
-                                    
-
-                            
                                 else:
                                     print(f"Địa chỉ IP không hợp lệ: {new_ip.text}")
 
@@ -329,12 +327,26 @@ def main():
                                     ]
                                 else:
                                     print(f"Địa chỉ IP không hợp lệ: {entered_ip}")
+                elif event.button == 4:  # Scroll up
+                  ui_state.scroll_y = max(0, ui_state.scroll_y - 20)
+                elif event.button == 5:  # Scroll down
+                  ui_state.scroll_y = min(ui_state.max_scroll_y, ui_state.scroll_y + 20)
 
-        
+
+        screen.fill(WHITE)
         for display in displays:
             display.draw(screen, ui_state.scroll_y, HEIGHT)
 
         add_button.draw(screen, 0, HEIGHT)
+        # Draw status buttons using cached status
+        for i, ip in enumerate(VICTIM_IPS):
+            status = ui_state.victims_status.get(ip, "Not reachable")
+            if status == "Reachable":
+                status_button = Button((i % 3) * 250 + 50, (i // 3) * 200 + 50, 20, 20, "", GREEN)
+            else:
+                status_button = Button((i % 3) * 250 + 50, (i // 3) * 200 + 50, 20, 20, "", RED)
+            status_button.draw(screen, ui_state.scroll_y)
+
 
         if new_ip: 
             input_rect = pygame.Rect(200, 200, 300, 40) 
@@ -347,6 +359,7 @@ def main():
             pygame.draw.rect(screen, RED, cancel_button)
 
         pygame.display.flip()  
+    pygame.quit()
 
 
 
