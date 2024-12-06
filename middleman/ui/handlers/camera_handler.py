@@ -48,51 +48,55 @@ class CameraReceiver:
                 sock.settimeout(1.0)  # Add timeout
 
                 while self.running:
-                    try:
-                        size_len = sock.recv(1)
-                        if not size_len:
-                            print("Disconnected from server.")
-                            break
-
-                        size_len = int.from_bytes(size_len, byteorder='big')
-                        if size_len != 4:
-                            print(f"Invalid size length: {size_len}, expected 4")
-                            continue
-
-                        size_bytes = sock.recv(4)
-                        if len(size_bytes) != 4:
-                            print("Failed to receive size bytes")
-                            continue
-
-                        size = int.from_bytes(size_bytes, byteorder='big')
-                        if size <= 0 or size > 1000000:
-                            print(f"Invalid frame size: {size}")
-                            continue
-
-                        pixels = recvall(sock, size)
-                        if not pixels:
-                            print("Received incomplete frame data.")
-                            continue
-
-                        try:
-                            pixels = zlib.decompress(pixels)
-                            img = cv2.imdecode(np.frombuffer(pixels, dtype=np.uint8), cv2.IMREAD_COLOR)
-                            if img is not None:
-                                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                                img = pygame.image.fromstring(img.tobytes(), img.shape[1::-1], 'RGB')
-
-                                with self.lock:
-                                    self.buffer = img
-
-                        except Exception as e:
-                            print(f"Error processing frame: {e}")
-                            continue
-
-                    except socket.timeout:
-                        continue
-                    except Exception as e:
-                        print(f"Error receiving frame: {e}")
+                    ready, _, _ = select.select([sock], [], [], 1.0)
+                    if not self.running:
                         break
+                    if ready:
+                        try:
+                            size_len = sock.recv(1)
+                            if not size_len:
+                                print("Disconnected from server.")
+                                break
+
+                            size_len = int.from_bytes(size_len, byteorder='big')
+                            if size_len != 4:
+                                print(f"Invalid size length: {size_len}, expected 4")
+                                continue
+
+                            size_bytes = sock.recv(4)
+                            if len(size_bytes) != 4:
+                                print("Failed to receive size bytes")
+                                continue
+
+                            size = int.from_bytes(size_bytes, byteorder='big')
+                            if size <= 0 or size > 1000000:
+                                print(f"Invalid frame size: {size}")
+                                continue
+
+                            pixels = recvall(sock, size)
+                            if not pixels:
+                                print("Received incomplete frame data.")
+                                continue
+
+                            try:
+                                pixels = zlib.decompress(pixels)
+                                img = cv2.imdecode(np.frombuffer(pixels, dtype=np.uint8), cv2.IMREAD_COLOR)
+                                if img is not None:
+                                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                                    img = pygame.image.fromstring(img.tobytes(), img.shape[1::-1], 'RGB')
+
+                                    with self.lock:
+                                        self.buffer = img
+
+                            except Exception as e:
+                                print(f"Error processing frame: {e}")
+                                continue
+
+                        except socket.timeout:
+                            continue
+                        except Exception as e:
+                            print(f"Error receiving frame: {e}")
+                            break
 
         except Exception as e:
             print(f"Connection error: {e}")
@@ -125,6 +129,13 @@ class CameraReceiver:
 
             if self.double_buffer:
                 pygame.display.update([self.screen_panel_rect])
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.stop()
+
+        pygame.quit()
+
 
 def camerareceiver(host, port=5002):
     receiver = CameraReceiver(host, port)
