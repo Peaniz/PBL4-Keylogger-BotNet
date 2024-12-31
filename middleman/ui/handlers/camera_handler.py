@@ -33,11 +33,11 @@ class CameraReceiver:
         self.port = port
         self.running = True
         self.screen = pygame.display.get_surface()
-        self.frame_surface = pygame.Surface((600, 300))
+        self.frame_surface = pygame.Surface((800, 450))
         self.frame_surface.fill((0, 0, 0))
         self.screen_panel_rect = pygame.Rect(
-            (self.screen.get_width() - 600) // 2,
-            (self.screen.get_height() - 300) // 2,
+            (self.screen.get_width() - 800) // 2,
+            (self.screen.get_height() - 450) // 2,
             600, 300
         )
         self.receive_thread = None
@@ -51,10 +51,10 @@ class CameraReceiver:
 
     def create_error_surface(self, message):
         """Create an error message surface"""
-        surface = pygame.Surface((600, 300))
+        surface = pygame.Surface((800, 450))
         surface.fill((0, 0, 0))
         text = pygame.font.Font(None, 36).render(message, True, (255, 255, 255))
-        text_rect = text.get_rect(center=(300, 150))
+        text_rect = text.get_rect(center=(400, 225))
         surface.blit(text, text_rect)
         return surface
 
@@ -125,7 +125,7 @@ class CameraReceiver:
                             img = cv2.imdecode(np.frombuffer(pixels, dtype=np.uint8), cv2.IMREAD_COLOR)
                             if img is not None:
                                 # Convert and resize frame
-                                img = cv2.resize(img, (600, 300))
+                                img = cv2.resize(img, (800, 450))
                                 img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                                 img = pygame.surfarray.make_surface(img.swapaxes(0, 1))
                                 

@@ -30,7 +30,7 @@ class ScreenReceiver:
         self.port = port
         self.running = True
         self.screen = pygame.display.get_surface()
-        self.frame_surface = pygame.Surface((600, 300))  # Khung cố định
+        self.frame_surface = pygame.Surface((800, 450))  # Khung cố định
         self.frame_surface.fill((0, 0, 0))  # Nền đen cho khung
         self.screen_panel_rect = self.frame_surface.get_rect(center=self.screen.get_rect().center)
         self.receive_thread = None
@@ -74,7 +74,7 @@ class ScreenReceiver:
 
                         try:
                             pixels = zlib.decompress(pixels)
-                            img = pygame.image.fromstring(pixels, (600, 300), 'RGB')
+                            img = pygame.image.fromstring(pixels, (800, 450), 'RGB')
 
                             with self.lock:
                                 self.buffer = img
