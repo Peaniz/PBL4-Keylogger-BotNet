@@ -1,7 +1,5 @@
 from database.connect.connect import get_all_victims_ip, add_victim, connect_to_database
 
-
-
 def connect_to_db():
     return connect_to_database()
 

